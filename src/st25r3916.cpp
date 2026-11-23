@@ -454,6 +454,28 @@ static void encode1of4(std::vector<uint8_t>& out, uint8_t data) {
     for (int i = 0; i < 4; ++i) { out.push_back(sym[data & 0x03]); data >>= 2; }
 }
 
+// Decodifica la respuesta ISO15693 del FIFO (modo subcarrier stream): 2 bits de FIFO por bit
+// de datos, SOF de 5 bits, patrón 0x01->0, 0x02->1, 0x1D->EOF. Portado de furi_hal_nfc_iso15693.c
+// del firmware del Flipper (mismo chip). Devuelve nº de bytes decodificados.
+static int decodeIso15693(const uint8_t* fifo, int nbytes, uint8_t* out, int outcap) {
+    for (int i = 0; i < outcap; ++i) out[i] = 0;
+    int buf_bits = nbytes * 8;
+    if (buf_bits <= 10) return 0;
+    int bit_pos = 0;
+    for (int i = 5 /*SOF 5 bits*/; i < buf_bits - 5; i += 2) {
+        int byte_index = i / 8, bit_offset = i % 8;
+        uint8_t resp = (fifo[byte_index] >> bit_offset) |
+                       (uint8_t)(fifo[byte_index + 1] << (8 - bit_offset));
+        if (resp == 0x1D) break;              // EOF
+        uint8_t pat = resp & 0x03;
+        if (pat == 0x01) { bit_pos++; }       // bit 0
+        else if (pat == 0x02) { out[bit_pos / 8] |= 1 << (bit_pos % 8); bit_pos++; }  // bit 1
+        else break;
+        if (bit_pos / 8 >= outcap) break;
+    }
+    return bit_pos / 8;
+}
+
 void St25r3916::configureNfcV() {
     cmd(CMD_STOP_ALL);
     modifyReg(REG_OP_CONTROL, 0x00, OP_WU);
@@ -470,7 +492,7 @@ void St25r3916::configureNfcV() {
     writeRegB(0x05, 0x40); writeRegB(0x06, 0x14); writeRegB(0x0B, 0x0C);
     writeRegB(REGB_CORRELATOR_1, 0x13); writeRegB(REGB_CORRELATOR_2, 0x01);
     writeRegB(0x0F, 0x00); writeRegB(REGB_FIELD_ON_GUARD, 0x00);
-    writeRegB(0x28, 0x10); writeRegB(0x29, 0x7C); writeRegB(REGB_RESISTIVE_AM, 0x80);
+    writeRegB(0x28, readRegB(0x28) & ~0x88); writeRegB(0x29, 0x7C);  // AUX_MOD: usar regulador AM (como Flipper)
     writeReg(REG_MODE_DEF, 0x70);   // subcarrier stream mode
     fieldOn();
 }
@@ -493,11 +515,15 @@ bool St25r3916::nfcvInventory(uint8_t* raw, int& len) {
     fifoLoad(enc.data(), enc.size());
     writeReg16(REG_NUM_TX_BYTES_1, uint16_t((enc.size() & 0x1FF) << 3));
     cmd(CMD_TRANSMIT_WITHOUT_CRC);
-    uint8_t buf[64], err;
+    uint8_t buf[128], err;
     int n = receiveFrame(*this, buf, sizeof(buf), 20, err);
     if (n <= 0) return false;
-    len = n;
-    for (int i = 0; i < n && i < 64; ++i) raw[i] = buf[i];
+    // Decodificar el stream ISO15693 a bytes de datos
+    uint8_t dec[64];
+    int dn = decodeIso15693(buf, n, dec, sizeof(dec));
+    if (dn <= 0) { len = n; for (int i = 0; i < n && i < 64; ++i) raw[i] = buf[i]; return true; }
+    len = dn;
+    for (int i = 0; i < dn && i < 64; ++i) raw[i] = dec[i];
     return true;
 }
 
@@ -516,11 +542,14 @@ bool St25r3916::iclassIdentify(uint8_t* raw, int& len) {
         writeReg16(REG_NUM_TX_BYTES_1, uint16_t((enc.size() & 0x1FF) << 3));
         cmd(CMD_TRANSMIT_WITHOUT_CRC);
         if (!want_rx) { waitIrq(IRQ_TXE, 10); return true; }
-        uint8_t buf[64], err;
+        uint8_t buf[128], err;
         int m = receiveFrame(*this, buf, sizeof(buf), 20, err);
         if (m <= 0) return false;
-        rxlen = m;
-        for (int i = 0; i < m && i < 64; ++i) rx[i] = buf[i];
+        uint8_t dec[64];
+        int dn = decodeIso15693(buf, m, dec, sizeof(dec));
+        if (dn <= 0) { rxlen = m; for (int i = 0; i < m && i < 64; ++i) rx[i] = buf[i]; return true; }
+        rxlen = dn;
+        for (int i = 0; i < dn && i < 64; ++i) rx[i] = dec[i];
         return true;
     };
     const uint8_t act_all[1]  = {0x0A};
