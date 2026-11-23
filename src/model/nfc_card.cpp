@@ -23,6 +23,31 @@ const char* tech_name(Tech tech) {
     return "?";
 }
 
+std::string card_product(const Card& card) {
+    // NTAG / Ultralight: el byte 6 de GET_VERSION da el modelo exacto.
+    if (card.type == CardType::MifareUltralight) {
+        if (card.version.size() >= 8 && card.version[1] == 0x04) {
+            switch (card.version[6]) {
+                case 0x0B: return "MIFARE Ultralight EV1 (48 B)";
+                case 0x0E: return "MIFARE Ultralight EV1 (128 B)";
+                case 0x0F: return "NTAG213 (144 B)";
+                case 0x11: return "NTAG215 (504 B)";
+                case 0x13: return "NTAG216 (888 B)";
+                default: return "NTAG21x / Ultralight EV1";
+            }
+        }
+        return "MIFARE Ultralight (clásica)";
+    }
+    // DESFire: el ATS típico de EV1 es 06 75 77 81 02 80.
+    if (card.type == CardType::MifareDesfire) {
+        if (card.ats.size() >= 6 && card.ats[1] == 0x75 && card.ats[2] == 0x77) {
+            return "MIFARE DESFire EV1";
+        }
+        return "MIFARE DESFire";
+    }
+    return card_type_name(card.type);
+}
+
 const char* card_type_name(CardType type) {
     switch (type) {
         case CardType::MifareUltralight:

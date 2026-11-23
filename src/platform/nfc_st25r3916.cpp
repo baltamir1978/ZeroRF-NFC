@@ -35,6 +35,8 @@ nfc::Card make_fake_ntag() {
     card.atqa = 0x0044;
     card.sak = 0x00;
     card.block_size = 4;
+    // GET_VERSION de una NTAG213, para que el simulador enseñe el producto exacto.
+    card.version = {0x00, 0x04, 0x04, 0x02, 0x01, 0x00, 0x0F, 0x03};
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -279,7 +281,20 @@ void NfcSt25r3916::run_scan_device() {
             card.uid.assign(picc.uid, picc.uid + picc.uid_len);
             card.type = nfc::detect_card_type(card.atqa, card.sak);
             if ((picc.sak & 0x7F) == 0x00) {
+                // NTAG / Ultralight: GET_VERSION da el modelo exacto, y volcamos la memoria.
+                uint8_t ver[16];
+                int vlen = 0;
+                if (chip.type2GetVersion(ver, vlen) && vlen >= 8) {
+                    card.version.assign(ver, ver + vlen);
+                }
                 dump_type2(chip, picc, card);
+            } else if (picc.sak & 0x20) {
+                // ISO14443-4 (DESFire, etc.): pedir el ATS para afinar el tipo.
+                uint8_t ats[32];
+                int alen = 0;
+                if (chip.rats(ats, alen) && alen > 0) {
+                    card.ats.assign(ats, ats + alen);
+                }
             }
             chip.fieldOff();
             std::lock_guard<std::mutex> lock(mutex_);

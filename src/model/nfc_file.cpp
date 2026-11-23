@@ -56,6 +56,12 @@ bool save_nfc(std::ostream& out, const Card& card, std::string& error) {
         std::snprintf(buf, sizeof(buf), "%02X", card.sak);
         out << "SAK: " << buf << '\n';
     }
+    if (!card.ats.empty()) {
+        out << "ATS: " << to_hex(card.ats) << '\n';
+    }
+    if (!card.version.empty()) {
+        out << "GetVersion: " << to_hex(card.version) << '\n';
+    }
 
     if (card.has_memory() && (card.block_size == 16 || card.block_size == 4)) {
         const char* label = card.block_size == 16 ? "Block" : "Page";
@@ -107,6 +113,10 @@ bool load_nfc(std::istream& in, Card& card, std::string& error) {
             if (from_hex(value, bytes) && bytes.size() == 1) {
                 card.sak = bytes[0];
             }
+        } else if (key == "ATS") {
+            from_hex(value, card.ats);
+        } else if (key == "GetVersion") {
+            from_hex(value, card.version);
         } else if (key.rfind("Block ", 0) == 0 || key.rfind("Page ", 0) == 0) {
             const std::size_t space = key.find(' ');
             const std::size_t index = static_cast<std::size_t>(std::stoul(key.substr(space + 1)));

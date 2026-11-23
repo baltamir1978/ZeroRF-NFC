@@ -446,10 +446,15 @@ void NfcScreen::refresh() {
         lv_obj_set_style_text_align(line2_, LV_TEXT_ALIGN_LEFT, 0);
         lv_obj_set_style_text_align(line3_, LV_TEXT_ALIGN_LEFT, 0);
         lv_label_set_text(headline_, current_name_.c_str());
-        lv_label_set_text(line1_, (std::string("Type: ") + nfc::card_type_name(current_card_.type)).c_str());
+        lv_label_set_text(line1_, (std::string("Type: ") + nfc::card_product(current_card_)).c_str());
         lv_label_set_text(line2_, (std::string("UID: ") + nfc::to_hex(current_card_.uid)).c_str());
+        // Tercera línea: el NDEF si lo hay; si no, el ATS (DESFire); si no, nada.
         const std::string ndef = ndef_summary(current_card_);
-        lv_label_set_text(line3_, ndef.empty() ? "No NDEF" : ndef.c_str());
+        std::string third = ndef;
+        if (third.empty() && !current_card_.ats.empty()) {
+            third = "ATS: " + nfc::to_hex(current_card_.ats);
+        }
+        lv_label_set_text(line3_, third.empty() ? "No NDEF" : third.c_str());
         lv_obj_set_style_text_color(headline_, colors.primary, 0);
         lv_obj_set_style_text_color(line1_, colors.text, 0);
         lv_obj_set_style_text_color(line2_, colors.text, 0);

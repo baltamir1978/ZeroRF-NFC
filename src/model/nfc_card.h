@@ -59,10 +59,18 @@ struct Card {
     std::vector<uint8_t> memory;
     uint16_t block_size = 0; // 16 en Classic, 4 en UL/NTAG; 0 si no hay volcado
 
+    // Para afinar el tipo exacto: respuesta a GET_VERSION (UL/NTAG) y el ATS (ISO14443-4).
+    std::vector<uint8_t> version; // 8 bytes de GET_VERSION, si se leyó
+    std::vector<uint8_t> ats;     // ATS de una tarjeta ISO-DEP (DESFire, etc.), si se leyó
+
     bool has_memory() const {
         return block_size > 0 && !memory.empty();
     }
 };
+
+// Nombre exacto del producto a partir del tipo + GET_VERSION + ATS (p. ej. "NTAG215",
+// "MIFARE DESFire EV1"). Si no hay datos finos, cae en `card_type_name`.
+std::string card_product(const Card& card);
 
 // UID / bytes en hexadecimal con espacios ("04 A2 2B 10"). Vacío -> "".
 std::string to_hex(const std::vector<uint8_t>& bytes);

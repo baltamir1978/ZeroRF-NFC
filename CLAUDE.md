@@ -101,10 +101,17 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 - El `.deb` se copia a `~/Documentos/ZeroRF-NFC-<versión>.deb`, sustituyendo al anterior.
 - Commit en `main` con mensaje en español que empieza por la versión, y push.
 - `app-builder.json` tiene la ficha para la tienda (`czdev publish`), pero **no está publicada**:
-  la primera publicación pide un vídeo de la app en el aparato. Falta hacer el icono propio
-  (`Tools/generar_icono.py` todavía dibuja el de TV-B-Gone).
+  la primera publicación pide un vídeo de la app en el aparato. El icono ya es propio
+  (`Tools/generar_icono.py`: ondas en ámbar sobre violeta).
 
 ## Estado
+
+- **0.3.0 (23-nov-2026) — tipo exacto en la pantalla + icono propio.** Al escanear, además del UID
+  y el tipo, se lee **GET_VERSION** (NTAG/Ultralight → "NTAG215 (504 B)", etc.) y el **ATS** de las
+  ISO14443-4 (DESFire → "MIFARE DESFire EV1", con su línea `ATS:`). Campos nuevos `version` y `ats`
+  en `nfc::Card` (se guardan en el `.nfc` como `GetVersion:` y `ATS:`); `card_product()` da el
+  nombre fino. Icono nuevo (ondas en ámbar sobre violeta; ya no es el de TV-B-Gone). Probado en el
+  simulador; falta confirmar en el aparato con las tarjetas de Bruno.
 
 - **MIFARE Classic (Crypto1) — autenticación portada y probada en el aparato (23-nov-2026).**
   En `st25r3916.cpp`: `mifareAuth(key_a, uid4, block, key)` (3 pasos: AUTH1 con CRC → nonce;
