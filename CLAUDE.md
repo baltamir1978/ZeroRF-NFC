@@ -106,7 +106,9 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
-- **0.2.0 (23-nov-2026) — NFC con el driver real; sin probar en el aparato la app integrada.**
+- **0.2.0 (23-nov-2026) — NFC con el driver real; escanear y guardar confirmados por Bruno en
+  el aparato** (la Ultralight EV1, 20 páginas, y la NTAG215, 135 páginas con su NDEF URI, en
+  `~/.local/share/zerorfnfc/nfc/`). Emular sigue sin validar (falta un lector que funcione).
   - El 23-nov-2026 la sesión «CPZero» de `plex` trabajó todo el día sobre el aparato, pero **en
     un proyecto nuevo** (`plex:~/CPZero/ZeroRF-NFC`, sin este repo, que no estaba en GitHub): CLI
     + una UI LVGL mínima aparte. Su historial está fusionado aquí (rama `plex`, «ours»: se
@@ -129,8 +131,8 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
     grupos `gpio` y `spi`: el `chown` de `cap_power.cpp` no se usa). Leyó a la primera la
     Ultralight EV1 de pruebas (UID 7 B, 20 páginas = 80 B), igual que `Tools/zeronfc read`.
     Instalada la 0.2.0 en lugar del paquete que dejó plex (mismo nombre, `zerorf-nfc`).
-  - Pendiente: que Bruno confirme la pantalla NFC en el aparato (escanear, guardar, emular),
-    escribir tarjetas desde la UI, backend real del CC1101.
+  - Pendiente: validar emular con un lector, escribir tarjetas desde la UI, backend real del
+    CC1101.
 
 - **20-nov-2026 (sin versión nueva)**: arreglado en `app.cpp` el núcleo al 100 % que traía la
   plantilla (sin `lv_delay_set_cb`, `lv_delay_ms` esperaba dando vueltas; lo cazó ZeroGPS).

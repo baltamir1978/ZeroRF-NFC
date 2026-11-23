@@ -46,8 +46,8 @@ map and status.
 
 ## Status
 
-**0.2.0 — NFC reader wired to the real ST25R3916 driver; the integrated app is not yet tested
-on the device.** The driver itself was developed and tested on the Cardputer (NFC-A read, Type 2
+**0.2.0 — NFC reader on the real ST25R3916: scanning and saving cards works on the device**
+(MIFARE Ultralight EV1 and NTAG215, full dumps). Emulation is not yet validated. The driver itself was developed and tested on the Cardputer (NFC-A read, Type 2
 dump/write/clone). In the desktop simulator both tools run against a *simulated* radio/reader:
 
 - Sub-GHz: record → decode (Princeton/EV1527) → save (`.sub`, Flipper-compatible) → replay → delete.
