@@ -1,5 +1,6 @@
 // zeronfc — herramienta de línea de comandos para el NFC del Cardputer Zero (ST25R3916).
 // Fase 1 en curso. De momento: encender el Cap y validar el arranque del chip (init).
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -408,15 +409,147 @@ static int cmd_dump(bool vdd5) {
     return 0;
 }
 
+// Guarda un volcado Type 2 a fichero de texto (una línea "página hex8" + cabecera con UID).
+static int cmd_save(bool vdd5, const std::string& path, int maxpages) {
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); return 2; }
+    st25::InitStatus s = nfc.init();
+    if (!s.ok) { printf("init falló: %s\n", s.error.c_str()); cap_power(false); return 1; }
+    st25::PiccA p;
+    if (!select_card(nfc, p)) { printf("No detecté ninguna tarjeta.\n"); cap_power(false); return 1; }
+    std::ofstream f(path);
+    if (!f) { fprintf(stderr, "ERROR: no pude crear %s\n", path.c_str()); cap_power(false); return 2; }
+    char uidhex[32] = {0};
+    for (int j = 0; j < p.uid_len; ++j) sprintf(uidhex + j * 2, "%02X", p.uid[j]);
+    f << "# ZeroNFC Type2 dump  UID=" << uidhex
+      << "  ATQA=" << std::hex << (int)p.atqa[1] << (int)p.atqa[0]
+      << "  SAK=" << (int)p.sak << std::dec << "\n";
+    uint8_t first[16] = {0};
+    int printed = 0;
+    for (int page = 0; page < maxpages; page += 4) {
+        uint8_t buf[16];
+        if (!nfc.type2Read((uint8_t)page, buf)) break;
+        if (page == 0) memcpy(first, buf, 16);
+        else if (page >= 16 && memcmp(buf, first, 16) == 0) break;  // memoria repetida: fin
+        for (int q = 0; q < 4; ++q) {
+            char line[32];
+            sprintf(line, "%d %02X%02X%02X%02X\n", page + q, buf[q*4], buf[q*4+1], buf[q*4+2], buf[q*4+3]);
+            f << line;
+            ++printed;
+        }
+    }
+    f.close();
+    printf("Guardadas %d páginas de la tarjeta %s en %s\n", printed, uidhex, path.c_str());
+    nfc.close();
+    cap_power(false);
+    return 0;
+}
+
+// Carga un volcado desde fichero y lo escribe en la tarjeta (páginas de usuario >=4).
+static int cmd_load(bool vdd5, const std::string& path, bool force) {
+    std::ifstream f(path);
+    if (!f) { fprintf(stderr, "ERROR: no pude abrir %s\n", path.c_str()); return 2; }
+    std::vector<std::pair<int, std::array<uint8_t, 4>>> pages;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        int pg; char hex[16] = {0};
+        if (sscanf(line.c_str(), "%d %8s", &pg, hex) != 2) continue;
+        std::array<uint8_t, 4> d{};
+        unsigned b0, b1, b2, b3;
+        if (sscanf(hex, "%2x%2x%2x%2x", &b0, &b1, &b2, &b3) != 4) continue;
+        d = {(uint8_t)b0, (uint8_t)b1, (uint8_t)b2, (uint8_t)b3};
+        pages.push_back({pg, d});
+    }
+    f.close();
+    if (pages.empty()) { fprintf(stderr, "ERROR: el fichero no tiene páginas válidas\n"); return 1; }
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); return 2; }
+    st25::InitStatus s = nfc.init();
+    if (!s.ok) { printf("init falló: %s\n", s.error.c_str()); cap_power(false); return 1; }
+    st25::PiccA p;
+    if (!select_card(nfc, p)) { printf("No detecté ninguna tarjeta destino.\n"); cap_power(false); return 1; }
+    char uidhex[32] = {0};
+    for (int j = 0; j < p.uid_len; ++j) sprintf(uidhex + j * 2, "%02X", p.uid[j]);
+    printf("Tarjeta destino UID=%s. Cargando %zu páginas del volcado...\n", uidhex, pages.size());
+    int ok = 0, skip = 0, fail = 0;
+    for (auto& pr : pages) {
+        int pg = pr.first;
+        if (pg < 4 && !force) { ++skip; continue; }   // 0-3 = UID/lock/CC (no reescribibles normalmente)
+        if (nfc.type2Write((uint8_t)pg, pr.second.data())) ++ok; else { ++fail; printf("  fallo pág %d\n", pg); }
+    }
+    printf("Escritas %d páginas, %d omitidas (0-3), %d con fallo.\n", ok, skip, fail);
+    printf(force ? "" : "(Las páginas 0-3 no se escriben sin --force; el UID de fábrica no se puede reescribir en tarjetas normales.)\n");
+    nfc.close();
+    cap_power(false);
+    return fail ? 1 : 0;
+}
+
+// Escribe una página Type 2 (4 bytes) y la relee para verificar.
+static int cmd_write(bool vdd5, int page, const uint8_t data[4], bool force) {
+    if (page < 4 && !force) {
+        fprintf(stderr, "ERROR: páginas 0-3 son UID/lock/CC; escribirlas puede inutilizar la tarjeta.\n"
+                        "       Usa --force si de verdad quieres (bajo tu responsabilidad).\n");
+        return 64;
+    }
+    if (page < 0 || page > 255) { fprintf(stderr, "ERROR: página fuera de rango\n"); return 64; }
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); return 2; }
+    st25::InitStatus s = nfc.init();
+    if (!s.ok) { printf("init falló: %s\n", s.error.c_str()); cap_power(false); return 1; }
+    st25::PiccA p;
+    if (!select_card(nfc, p)) { printf("No detecté ninguna tarjeta.\n"); cap_power(false); return 1; }
+    char uidhex[32] = {0};
+    for (int j = 0; j < p.uid_len; ++j) sprintf(uidhex + j * 2, "%02X", p.uid[j]);
+    printf("Tarjeta UID=%s. Escribiendo página %d = %02X %02X %02X %02X ...\n",
+           uidhex, page, data[0], data[1], data[2], data[3]);
+    if (!nfc.type2Write((uint8_t)page, data)) { printf("La escritura NO fue confirmada (sin ACK).\n"); cap_power(false); return 1; }
+    // Verificar releyendo (READ de 'page' devuelve 4 páginas; la nuestra es la primera)
+    uint8_t rd[16];
+    bool ok = nfc.type2Read((uint8_t)page, rd) &&
+              rd[0] == data[0] && rd[1] == data[1] && rd[2] == data[2] && rd[3] == data[3];
+    printf(ok ? "OK: escrito y verificado.\n" : "ACK recibido pero la relectura NO coincide.\n");
+    nfc.close();
+    cap_power(false);
+    return ok ? 0 : 1;
+}
+
+static bool parse4(const char* hex, uint8_t out[4]) {
+    int n = 0; uint8_t v = 0; int nib = 0;
+    for (const char* c = hex; *c && n < 4; ++c) {
+        char ch = *c;
+        int d;
+        if (ch >= '0' && ch <= '9') d = ch - '0';
+        else if (ch >= 'a' && ch <= 'f') d = ch - 'a' + 10;
+        else if (ch >= 'A' && ch <= 'F') d = ch - 'A' + 10;
+        else continue;  // ignora separadores
+        v = (v << 4) | d;
+        if (++nib == 2) { out[n++] = v; v = 0; nib = 0; }
+    }
+    return n == 4 && nib == 0;
+}
+
 int main(int argc, char** argv) {
-    bool vdd5 = false, keep_power = false;
+    bool vdd5 = false, keep_power = false, force = false;
     int hold_ms = 0, secs = 15;
     std::string sub = argc > 1 ? argv[1] : "init";
+    std::vector<std::string> pos;  // argumentos posicionales (no-flag)
     for (int i = 2; i < argc; ++i) {
         if (!strcmp(argv[i], "--5v")) vdd5 = true;
         else if (!strcmp(argv[i], "--keep-power")) keep_power = true;
+        else if (!strcmp(argv[i], "--force")) force = true;
         else if (!strcmp(argv[i], "--hold") && i + 1 < argc) hold_ms = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--secs") && i + 1 < argc) secs = atoi(argv[++i]);
+        else pos.push_back(argv[i]);
     }
     if (sub == "init") return cmd_init(vdd5, keep_power, hold_ms);
     if (sub == "detect") return cmd_detect(vdd5, secs);
@@ -426,6 +559,22 @@ int main(int argc, char** argv) {
     if (sub == "rf") return cmd_rf(vdd5);
     if (sub == "dump") return cmd_dump(vdd5);
     if (sub == "probe") return cmd_probe(vdd5);
-    fprintf(stderr, "uso: %s init|detect [--5v] [--keep-power] [--hold MS] [--secs N]\n", argv[0]);
+    if (sub == "write") {
+        uint8_t data[4];
+        if (pos.size() < 2 || !parse4(pos[1].c_str(), data)) {
+            fprintf(stderr, "uso: %s write <página> <8 hex>  (ej: write 4 DEADBEEF) [--force]\n", argv[0]);
+            return 64;
+        }
+        return cmd_write(vdd5, atoi(pos[0].c_str()), data, force);
+    }
+    if (sub == "save") {
+        if (pos.empty()) { fprintf(stderr, "uso: %s save <fichero>\n", argv[0]); return 64; }
+        return cmd_save(vdd5, pos[0], 232);
+    }
+    if (sub == "load") {
+        if (pos.empty()) { fprintf(stderr, "uso: %s load <fichero> [--force]\n", argv[0]); return 64; }
+        return cmd_load(vdd5, pos[0], force);
+    }
+    fprintf(stderr, "uso: %s init|detect|read|scan|sense|write|save|load ... [--5v] [--force] [--secs N]\n", argv[0]);
     return 64;
 }

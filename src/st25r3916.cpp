@@ -273,8 +273,11 @@ int receiveFrame(St25r3916& d, uint8_t* buf, int maxlen, int timeout_ms, uint8_t
                 !!(irq & st25::IRQ_COL), !!(irq & st25::IRQ_NRE), err_reg, bytes);
     }
     if (!(irq & st25::IRQ_RXE)) return -1;  // sin fin de recepción: timeout/no-response/colisión
-    if (bytes <= 0) return 0;
-    int n = bytes < maxlen ? bytes : maxlen;
+    uint8_t rxbits = (s2 >> 1) & 0x07;
+    int toread = bytes;
+    if (bytes == 0 && rxbits > 0) toread = 1;  // respuesta de bits sueltos (p.ej. ACK de 4 bits)
+    if (toread <= 0) return 0;
+    int n = toread < maxlen ? toread : maxlen;
     auto v = d.fifoRead(n);
     for (int i = 0; i < n; ++i) buf[i] = v[i];
     return n;
@@ -538,10 +541,22 @@ bool St25r3916::type2Read(uint8_t page, uint8_t out[16]) {
 }
 
 bool St25r3916::type2Write(uint8_t page, const uint8_t data[4]) {
-    uint8_t c[6] = {0xA2, page, data[0], data[1], data[2], data[3]};  // WRITE
-    TxRx r = transceive(c, 6 * 8, true, 20);
-    if (!r.ok || r.data.empty()) return false;
-    return (r.data[0] & 0x0F) == 0x0A;    // ACK = 0xA (4 bits)
+    // El comando WRITE lleva CRC, pero la respuesta ACK son 4 bits SIN CRC:
+    // hay que recibir con no_crc_rx=1 o el chip la descarta por "CRC erróneo".
+    uint8_t c[6] = {0xA2, page, data[0], data[1], data[2], data[3]};
+    prepTx(*this);
+    writeReg16(REG_NRT_1, 0x1000);   // NRT largo: la escritura EEPROM tarda ~5 ms antes del ACK
+    setAntcl(*this, false);
+    setNoCrcRx(*this, true);
+    clearIrq();
+    cmd(CMD_CLEAR_FIFO);
+    fifoLoad(c, 6);
+    writeReg16(REG_NUM_TX_BYTES_1, uint16_t((6 & 0x1FF) << 3));
+    cmd(CMD_TRANSMIT_WITH_CRC);
+    uint8_t buf[8], err;
+    int n = receiveFrame(*this, buf, sizeof(buf), 20, err);
+    if (n < 1) return false;
+    return (buf[0] & 0x0F) == 0x0A;    // ACK = 0xA (4 bits)
 }
 
 }  // namespace st25
