@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""Dibuja el icono de la app (una tele con el símbolo de apagado) en los tamaños que piden
-el lanzador (assets/images) y la tienda (store/icon.png). Necesita Pillow.
+"""Dibuja el icono de la app RF / NFC en los tamaños que piden el lanzador (assets/images) y la
+tienda (store/icon.png). El motivo son ondas de señal saliendo de un punto (sirve para Sub-GHz y
+para NFC/contactless a la vez), en ámbar sobre un fondo violeta oscuro, al estilo de las demás
+apps Zero (fondo degradado en cuadrado de esquinas redondas). Necesita Pillow.
 
     Tools/generar_icono.py
 """
@@ -15,10 +17,10 @@ LADO = 1024  # se dibuja grande y se reduce: así los bordes salen suaves
 def icono():
     imagen = Image.new("RGBA", (LADO, LADO), (0, 0, 0, 0))
 
-    # Fondo: degradado de arriba abajo recortado en un cuadrado de esquinas redondas.
+    # Fondo: degradado violeta oscuro recortado en un cuadrado de esquinas redondas.
     fondo = Image.new("RGBA", (LADO, LADO))
     trazo = ImageDraw.Draw(fondo)
-    arriba, abajo = (38, 44, 66), (12, 13, 22)
+    arriba, abajo = (58, 44, 86), (18, 14, 30)
     for y in range(LADO):
         t = y / (LADO - 1)
         trazo.line([(0, y), (LADO, y)], fill=tuple(round(a + (b - a) * t) for a, b in zip(arriba, abajo)) + (255,))
@@ -27,22 +29,20 @@ def icono():
     imagen.paste(fondo, (0, 0), mascara)
 
     trazo = ImageDraw.Draw(imagen)
-    claro = (230, 232, 240, 255)
-    pantalla = (16, 18, 28, 255)
-    rojo = (232, 72, 85, 255)
+    ambar = (247, 181, 56, 255)
+    ambar_claro = (255, 206, 112, 255)
 
-    # Antenas, tele y patas.
-    trazo.line([(512, 300), (380, 150)], fill=claro, width=30)
-    trazo.line([(512, 300), (644, 150)], fill=claro, width=30)
-    trazo.rounded_rectangle([170, 280, 854, 780], radius=80, fill=claro)
-    trazo.rounded_rectangle([220, 330, 804, 730], radius=45, fill=pantalla)
-    trazo.rounded_rectangle([300, 780, 360, 850], radius=14, fill=claro)
-    trazo.rounded_rectangle([664, 780, 724, 850], radius=14, fill=claro)
+    # Origen de la señal, abajo a la izquierda, dentro del margen del cuadrado.
+    ox, oy = 300, 724
 
-    # Símbolo de apagado: un arco abierto por arriba y la raya.
-    cx, cy, r = 512, 540, 120
-    trazo.arc([cx - r, cy - r, cx + r, cy + r], start=-55, end=235, fill=rojo, width=40)
-    trazo.rounded_rectangle([cx - 20, cy - r - 40, cx + 20, cy + 10], radius=20, fill=rojo)
+    # Punto de origen (el "emisor": antena del CC1101 / chip del NFC).
+    trazo.ellipse([ox - 52, oy - 52, ox + 52, oy + 52], fill=ambar_claro)
+
+    # Tres ondas concéntricas abriéndose hacia arriba a la derecha (NE). Cada arco va de
+    # ~-80° a ~10° respecto al origen, grosor decreciente con la distancia.
+    for r, w in ((230, 64), (400, 58), (570, 52)):
+        trazo.arc([ox - r, oy - r, ox + r, oy + r], start=-78, end=8, fill=ambar, width=w)
+
     return imagen
 
 
