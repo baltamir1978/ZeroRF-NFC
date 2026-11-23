@@ -9,6 +9,10 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
+
+#include <poll.h>
+#include <time.h>
 
 #include <fcntl.h>
 #include <linux/gpio.h>
@@ -17,6 +21,8 @@
 
 #include "st25r3916.h"
 #include "../../src/platform/cc1101/cc1101.h"
+#include "../../src/model/subghz_decode.h"
+#include "../../src/model/subghz_signal.h"
 
 static const char* kPowerLed = "/sys/class/leds/ext_5v_out/brightness";
 static const char* kSpiDev = "/dev/spidev0.2";
@@ -246,6 +252,136 @@ static const char* kClassicKeys[] = {
     "B0B1B2B3B4B5", "4D3A99C351DD", "1A982C7E459A", "AABBCCDDEEFF",
     "714C5C886E97", "587EE5F9350F", "A0478CC39091", "533CB6C723F6", "8FD0A4F256E9",
 };
+
+// Pide una línea GPIO como salida con un valor fijo y la mantiene (devuelve el fd, -1 si falla).
+static int gpio_out_hold(int chip_fd, int line, int value) {
+    gpio_v2_line_request req;
+    memset(&req, 0, sizeof(req));
+    req.offsets[0] = line;
+    req.num_lines = 1;
+    strncpy(req.consumer, "zerorf", sizeof(req.consumer) - 1);
+    req.config.flags = GPIO_V2_LINE_FLAG_OUTPUT;
+    req.config.num_attrs = 1;
+    req.config.attrs[0].attr.id = GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES;
+    req.config.attrs[0].attr.values = value ? 1 : 0;
+    req.config.attrs[0].mask = 1;
+    if (ioctl(chip_fd, GPIO_V2_GET_LINE_IOCTL, &req) < 0 || req.fd < 0) return -1;
+    return req.fd;
+}
+
+// Captura los flancos de una línea (GDO0 = GPIO15) durante `secs` segundos. Rellena `durs` con
+// las duraciones en microsegundos (el signo = nivel: + alto, - bajo). Devuelve nº de tramos.
+static int capture_edges(int chip_fd, int line, int secs, std::vector<long>& durs) {
+    gpio_v2_line_request req;
+    memset(&req, 0, sizeof(req));
+    req.offsets[0] = line;
+    req.num_lines = 1;
+    strncpy(req.consumer, "zerorf-gdo0", sizeof(req.consumer) - 1);
+    req.config.flags = GPIO_V2_LINE_FLAG_INPUT | GPIO_V2_LINE_FLAG_EDGE_RISING | GPIO_V2_LINE_FLAG_EDGE_FALLING;
+    if (ioctl(chip_fd, GPIO_V2_GET_LINE_IOCTL, &req) < 0 || req.fd < 0) return -1;
+
+    struct pollfd pfd = {req.fd, POLLIN, 0};
+    auto t_end = std::chrono::steady_clock::now() + std::chrono::seconds(secs);
+    uint64_t prev_ns = 0;
+    int prev_rising = -1;  // nivel ANTES del flanco actual
+    durs.clear();
+    while (std::chrono::steady_clock::now() < t_end && durs.size() < 20000) {
+        int ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(t_end - std::chrono::steady_clock::now()).count();
+        if (ms <= 0) break;
+        int r = poll(&pfd, 1, ms);
+        if (r <= 0) continue;
+        gpio_v2_line_event ev;
+        if (read(req.fd, &ev, sizeof(ev)) != (ssize_t)sizeof(ev)) continue;
+        bool rising = (ev.id == GPIO_V2_LINE_EVENT_RISING_EDGE);
+        if (prev_ns != 0 && prev_rising >= 0) {
+            long us = (long)((ev.timestamp_ns - prev_ns) / 1000);
+            // El tramo que acaba de terminar tenía el nivel = prev_rising (alto si venía de subir).
+            durs.push_back(prev_rising ? us : -us);
+        }
+        prev_ns = ev.timestamp_ns;
+        prev_rising = rising ? 1 : 0;
+    }
+    close(req.fd);
+    return (int)durs.size();
+}
+
+// Captura un mando Sub-GHz por OOK a 433,92 MHz y enseña el tren de pulsos.
+static int cmd_rfrx(int secs, int rfsw, double freq_mhz) {
+    cap_power(true);  // POWER_EN(26) + 5V del cap
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    int chip = open("/dev/gpiochip0", O_RDWR | O_CLOEXEC);
+    if (chip < 0) { fprintf(stderr, "no gpiochip0\n"); cap_power(false); return 2; }
+    int sw = gpio_out_hold(chip, 14, rfsw);  // RF_SW0 (banda / camino de RF)
+    cc::Cc1101 radio;
+    if (!radio.open()) { fprintf(stderr, "no abro CC1101\n"); if (sw>=0) close(sw); close(chip); cap_power(false); return 2; }
+    if (!radio.present()) { printf("CC1101 no responde.\n"); if (sw>=0) close(sw); close(chip); cap_power(false); return 1; }
+    uint32_t f = radio.setFrequency((uint32_t)(freq_mhz * 1e6));
+    radio.configureOokRx(f);
+    printf("Escuchando %.3f MHz (RF_SW0=%d, MARCSTATE=0x%02X). Pulsa el mando ya... (%d s)\n",
+           f / 1e6, rfsw, radio.marcState(), secs);
+    fflush(stdout);
+
+    std::vector<long> durs;
+    capture_edges(chip, 15, secs, durs);
+    radio.strobeIdle();
+    if (sw >= 0) close(sw);
+    close(chip);
+    cap_power(false);
+
+    // Contar sólo tramos "de verdad" (100us..20ms): filtra el ruido de picos muy cortos.
+    int real = 0;
+    for (long d : durs) { long a = d < 0 ? -d : d; if (a >= 100 && a <= 20000) ++real; }
+    printf("Flancos capturados: %zu (tramos útiles ~%d)\n", durs.size(), real);
+    if (durs.size() < 8) {
+        printf("Nada reconocible. Si el mando es de 433 y pulsaste, prueba RF_SW0=%d.\n", rfsw ? 0 : 1);
+        return 1;
+    }
+    // Intentar decodificar (Princeton/EV1527). Se le pasa el tren entero; el decodificador
+    // busca la trama entre las repeticiones.
+    subghz::Signal sig;
+    sig.frequency_hz = f;
+    sig.modulation = subghz::Modulation::Ook;
+    for (long d : durs) sig.timings.push_back((int32_t)d);
+    subghz::Decoded dec = subghz::decode(sig);
+    if (dec.ok()) {
+        printf("\n*** DECODIFICADO: %s ***\n", subghz::protocol_name(dec.protocol));
+        printf("    código = 0x%llX  (%u bits)  te=%u us\n",
+               (unsigned long long)dec.key, dec.bits, dec.te_us);
+        printf("    Es código FIJO: se puede guardar y reemitir.\n");
+    } else {
+        printf("\nNo se reconoció el protocolo (se podría reemitir en crudo igualmente).\n");
+    }
+
+    // Guardar la señal cruda en .sub (formato Flipper, RAW) para poder reemitirla luego, aunque
+    // no se haya decodificado: en código fijo, reemitir el crudo abre igual.
+    {
+        std::string dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.local/share/zerorfnfc/subghz";
+        std::string mk = "mkdir -p '" + dir + "'"; (void)system(mk.c_str());
+        char name[128];
+        snprintf(name, sizeof(name), "%s/captura-%ld.sub", dir.c_str(), (long)time(nullptr));
+        FILE* fp = fopen(name, "w");
+        if (fp) {
+            fprintf(fp, "Filetype: Flipper SubGhz RAW File\nVersion: 1\n");
+            fprintf(fp, "Frequency: %u\nPreset: FuriHalSubGhzPresetOok650Async\nProtocol: RAW\n", f);
+            fprintf(fp, "RAW_Data:");
+            for (long d : durs) { long a = d<0?-d:d; if (a>=50) fprintf(fp, " %ld", d); }
+            fprintf(fp, "\n");
+            fclose(fp);
+            printf("Señal cruda guardada en %s\n", name);
+        }
+    }
+
+    printf("Tren de pulsos (us, + alto / - bajo):\n");
+    int shown = 0;
+    for (size_t i = 0; i < durs.size() && shown < 120; ++i) {
+        long a = durs[i] < 0 ? -durs[i] : durs[i];
+        if (a < 60) continue;  // ignora picos de ruido al imprimir
+        printf("%6ld ", durs[i]);
+        if (++shown % 12 == 0) printf("\n");
+    }
+    printf("\n");
+    return 0;
+}
 
 // Detecta el CC1101 (Sub-GHz) por /dev/spidev0.1. Primer hito del garaje: confirmar cableado.
 static int cmd_cc1101(bool vdd5) {
@@ -913,7 +1049,8 @@ static bool parse4(const char* hex, uint8_t out[4]) {
 
 int main(int argc, char** argv) {
     bool vdd5 = false, keep_power = false, force = false;
-    int hold_ms = 0, secs = 15;
+    int hold_ms = 0, secs = 15, rfsw = 1;
+    double freq_mhz = 433.92;
     std::string sub = argc > 1 ? argv[1] : "init";
     std::vector<std::string> pos;  // argumentos posicionales (no-flag)
     for (int i = 2; i < argc; ++i) {
@@ -922,8 +1059,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--force")) force = true;
         else if (!strcmp(argv[i], "--hold") && i + 1 < argc) hold_ms = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--secs") && i + 1 < argc) secs = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--rfsw") && i + 1 < argc) rfsw = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--freq") && i + 1 < argc) freq_mhz = atof(argv[++i]);
         else pos.push_back(argv[i]);
     }
+    if (sub == "rfrx") return cmd_rfrx(secs ? secs : 6, rfsw, freq_mhz);
     if (sub == "init") return cmd_init(vdd5, keep_power, hold_ms);
     if (sub == "detect") return cmd_detect(vdd5, secs);
     if (sub == "read") return cmd_read(vdd5, 232);

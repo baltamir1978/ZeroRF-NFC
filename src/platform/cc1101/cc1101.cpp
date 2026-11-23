@@ -134,6 +134,46 @@ void Cc1101::writeConfig(const uint8_t (*regs)[2], size_t n) {
     for (size_t i = 0; i < n; ++i) writeReg(regs[i][0], regs[i][1]);
 }
 
+namespace {
+// Preset OOK/ASK asíncrono de 650 kHz de ancho de banda del firmware del Flipper Zero (GPLv3):
+// sin preámbulo/sync, paquete infinito en modo serie asíncrono. GDO0 (IOCFG0) se fija aparte.
+const uint8_t kOok650[][2] = {
+    {CC1101_FIFOTHR, 0x47},   {CC1101_PKTCTRL0, 0x32},  {CC1101_FSCTRL1, 0x06},
+    {CC1101_MDMCFG0, 0x00},   {CC1101_MDMCFG1, 0x00},   {CC1101_MDMCFG2, 0x30},
+    {CC1101_MDMCFG3, 0x32},   {CC1101_MDMCFG4, 0x67},   {CC1101_DEVIATN, 0x00},
+    {CC1101_MCSM0, 0x18},     {CC1101_FOCCFG, 0x18},    {CC1101_AGCCTRL0, 0x91},
+    {CC1101_AGCCTRL1, 0x00},  {CC1101_AGCCTRL2, 0x07},  {CC1101_WORCTRL, 0xFB},
+    {CC1101_FREND0, 0x11},    {CC1101_FREND1, 0x56},    {CC1101_FSCAL3, 0xE9},
+    {CC1101_FSCAL2, 0x2A},    {CC1101_FSCAL1, 0x00},    {CC1101_FSCAL0, 0x1F},
+    {CC1101_TEST2, 0x81},     {CC1101_TEST1, 0x35},     {CC1101_TEST0, 0x09},
+};
+// Tabla de potencia para OOK: [0]=0 (apagado = el "0" de OOK), [1]=0xC0 (máxima = el "1").
+const uint8_t kPaOok[8] = {0x00, 0xC0, 0, 0, 0, 0, 0, 0};
+} // namespace
+
+void Cc1101::configureOokRx(uint32_t freq_hz) {
+    strobeIdle();
+    reset();
+    writeConfig(kOok650, sizeof(kOok650) / sizeof(kOok650[0]));
+    setFrequency(freq_hz);
+    setPaTable(kPaOok);
+    writeReg(CC1101_IOCFG0, CC1101IocfgSerialDataOutput);  // 0x0D: GDO0 = datos demodulados
+    flushRx();
+    strobeRx();
+}
+
+void Cc1101::configureOokTx(uint32_t freq_hz) {
+    strobeIdle();
+    reset();
+    writeConfig(kOok650, sizeof(kOok650) / sizeof(kOok650[0]));
+    setFrequency(freq_hz);
+    setPaTable(kPaOok);
+    // GDO0 pasa a entrada asíncrona: el host marca el 1/0 de OOK por la línea GPIO15.
+    writeReg(CC1101_IOCFG0, CC1101IocfgHighImpedance);
+    flushTx();
+    strobeTx();
+}
+
 void Cc1101::strobeIdle() { strobe(CC1101_STROBE_SIDLE); }
 void Cc1101::strobeRx() { strobe(CC1101_STROBE_SRX); }
 void Cc1101::strobeTx() { strobe(CC1101_STROBE_STX); }

@@ -112,10 +112,21 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
   CS=CE1=GPIO7; SPI modo 0): reset, strobes, read/write reg y burst, part/version, setFrequency,
   PA table, RX/TX, FIFO, MARCSTATE. **Confirmado en cpzero** con `zeronfc cc1101`: part=0x00,
   version=0x14, resetea, acepta 433,92 MHz (MARCSTATE idle). Alimentación = la del cap (POWER_EN
-  GPIO26 + ext_5v, vía `cap_power`/`CapPower`). **Falta:** el preset OOK/ASK 433 (registros de
-  Flipper/Bruce), capturar la señal cruda por **GDO0 (GPIO15) con libgpiod** (timings), decodificar
-  (ya hay Princeton/EV1527) y reemitir; y confirmar la **banda con RF_SW0 (GPIO14)**. Luego llevarlo
-  a `platform::Cc1101` (hoy sim/stub) y a la pantalla Sub-GHz. Objetivo: el mando del garaje.
+  GPIO26 + ext_5v, vía `cap_power`/`CapPower`).
+  - **Captura OOK funcionando en el aparato (23-nov-2026).** Preset Ook650 de Flipper en
+    `configureOokRx/Tx`, GDO0=IOCFG0 0x0D (datos serie). Comando `zeronfc rfrx [--secs N]
+    [--rfsw 0|1] [--freq MHz]`: pone **RF_SW0 (GPIO14)=1** (banda 433 confirmada así), escucha y
+    captura los flancos de **GDO0 = GPIO15** con marca de tiempo (GPIO v2 chardev). **Capturado
+    el mando del garaje de Bruno** con la **antena de 433 puesta**: tren OOK limpio. Guarda la
+    señal cruda en `~/.local/share/zerorfnfc/subghz/captura-*.sub` (formato Flipper RAW).
+  - **El mando NO es Princeton/EV1527** (ratio **1:2**, no 1:3; `subghz::decode` no engancha,
+    normal). Es **código fijo** igualmente, así que se clona **reemitiendo el crudo** (no hace
+    falta decodificar). Hace falta antena para capturar/emitir (sin ella el CC1101 no capta y TX
+    sin antena daña el chip).
+  - **Falta:** la **reemisión (TX)** — OOK async bit-bang de GDO0 con tiempos (jitter de
+    userspace: mejor con SCHED_FIFO); probar que **abre el garaje** (hay que llevar el Cardputer,
+    que es portátil, hasta la puerta). Luego llevarlo a `platform::Cc1101` (hoy sim/stub) y a la
+    pantalla Sub-GHz.
 
 - **0.3.0 (23-nov-2026) — tipo exacto en la pantalla + icono propio.** Al escanear, además del UID
   y el tipo, se lee **GET_VERSION** (NTAG/Ultralight → "NTAG215 (504 B)", etc.) y el **ATS** de las

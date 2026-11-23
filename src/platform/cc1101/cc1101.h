@@ -48,6 +48,12 @@ public:
     void setPaTable(const uint8_t table[8]);
     void writeConfig(const uint8_t (*regs)[2], size_t n);  // pares {addr, valor}
 
+    // Configura recepción OOK/ASK asíncrona a `freq_hz` (preset Ook650 de Flipper): GDO0 (pin de
+    // la línea GPIO15) saca los datos demodulados en crudo, para capturar los tiempos con libgpiod.
+    void configureOokRx(uint32_t freq_hz);
+    // Igual para transmitir: OOK async, GDO0 pasa a ENTRADA y el host mete los tiempos por GPIO15.
+    void configureOokTx(uint32_t freq_hz);
+
     void strobeIdle();
     void strobeRx();
     void strobeTx();
