@@ -124,9 +124,13 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
     ningún protocolo estándar: propietaria (¿iCLASS/LEGIC?), territorio Proxmark; no insistir.
   - Tarjetas de prueba de Bruno: una NTAG (UID 7 B) y una **NTAG215**. Para validar NFC-V
     harían falta etiquetas ISO15693; UHF (Monza M750) no se puede con este cap.
-  - Pendiente: probar la app en cpzero (¿hace falta el `chown` de `/dev/gpiochip0` y
-    `/dev/spidev0.2` de `cap_power.cpp` o bruno ya está en los grupos?), escribir tarjetas desde
-    la UI, backend real del CC1101.
+  - **Probado en cpzero el 23-nov-2026 (backend, sin interfaz, como usuario `bruno`):** enciende
+    el cap, carga el overlay con `sudo -n` e inicializa el chip sin root (bruno está en los
+    grupos `gpio` y `spi`: el `chown` de `cap_power.cpp` no se usa). Leyó a la primera la
+    Ultralight EV1 de pruebas (UID 7 B, 20 páginas = 80 B), igual que `Tools/zeronfc read`.
+    Instalada la 0.2.0 en lugar del paquete que dejó plex (mismo nombre, `zerorf-nfc`).
+  - Pendiente: que Bruno confirme la pantalla NFC en el aparato (escanear, guardar, emular),
+    escribir tarjetas desde la UI, backend real del CC1101.
 
 - **20-nov-2026 (sin versión nueva)**: arreglado en `app.cpp` el núcleo al 100 % que traía la
   plantilla (sin `lv_delay_set_cb`, `lv_delay_ms` esperaba dando vueltas; lo cazó ZeroGPS).
