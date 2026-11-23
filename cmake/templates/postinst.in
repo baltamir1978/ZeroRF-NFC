@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+# Dar CAP_SYS_NICE al binario para que la transmisión Sub-GHz (CC1101) pueda usar prioridad de
+# tiempo real (SCHED_FIFO) sin ejecutarse como root: así los tiempos OOK (~400 us) no bailan.
+# El acceso a SPI (/dev/spidev0.1) y GPIO (/dev/gpiochip0) va por los grupos spi/gpio del usuario.
+if command -v setcap >/dev/null 2>&1; then
+    setcap cap_sys_nice+ep /usr/bin/@PROJECT_NAME@ 2>/dev/null || true
+fi
+exit 0

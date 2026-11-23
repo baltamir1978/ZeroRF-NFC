@@ -5,6 +5,7 @@
 #include "subghz_screen.h"
 
 #include "asset_manager.h"
+#include "name_edit.h"
 #include "subghz_decode.h"
 #include "subghz_file.h"
 #include "subghz_storage.h"
@@ -153,6 +154,37 @@ void SubGhzScreen::delete_selected() {
     status_line_ = "Deleted " + name;
 }
 
+void SubGhzScreen::start_rename() {
+    if (selection_ <= 0 || selection_ - 1 >= static_cast<int>(names_.size())) {
+        return;
+    }
+    rename_from_ = names_[selection_ - 1];
+    rename_buffer_.clear();  // se empieza en blanco; ENTER sin escribir deja el nombre igual
+    status_line_.clear();
+    mode_ = Mode::Rename;
+}
+
+void SubGhzScreen::finish_rename() {
+    mode_ = Mode::List;
+    const std::string name = text::clean_file_name(rename_buffer_);
+    if (name.empty() || name == rename_from_) {
+        return;
+    }
+    if (!platform::rename_signal(rename_from_, name)) {
+        status_line_ = "Name already used";
+        return;
+    }
+    reload_signals();
+    for (std::size_t i = 0; i < names_.size(); ++i) {
+        if (names_[i] == name) {
+            selection_ = static_cast<int>(i) + 1;
+            break;
+        }
+    }
+    ensure_visible();
+    status_line_ = "Renamed";
+}
+
 void SubGhzScreen::on_received() {
     const subghz::Signal signal = radio_.captured();
     const subghz::Decoded decoded = subghz::decode(signal);
@@ -190,6 +222,15 @@ void SubGhzScreen::on_received() {
 }
 
 bool SubGhzScreen::handle_key(uint32_t key) {
+    if (mode_ == Mode::Rename) {
+        if (key == LV_KEY_ENTER || key == '\r') {
+            finish_rename();
+        } else if (!text::edit_name(rename_buffer_, key)) {
+            return true;  // en modo texto no se escapan atajos (salvo ESC, que va por «atrás»)
+        }
+        refresh();
+        return true;
+    }
     if (mode_ != Mode::List) {
         if (key == LV_KEY_ENTER || key == '\r' || key == ' ') {
             radio_.stop();
@@ -238,6 +279,13 @@ bool SubGhzScreen::handle_key(uint32_t key) {
             delete_selected();
             refresh();
             return true;
+        case 'r':
+        case 'R':
+            if (selection_ > 0) {
+                start_rename();
+                refresh();
+            }
+            return true;
         default:
             return false;
     }
@@ -246,6 +294,11 @@ bool SubGhzScreen::handle_key(uint32_t key) {
 bool SubGhzScreen::handle_back() {
     if (mode_ == Mode::List) {
         return false; // nada que parar: que se vuelva al menú
+    }
+    if (mode_ == Mode::Rename) {
+        mode_ = Mode::List;  // cancelar sin cambiar el nombre
+        refresh();
+        return true;
     }
     radio_.stop();
     mode_ = Mode::List;
@@ -282,6 +335,20 @@ void SubGhzScreen::refresh() {
     const auto colors = view::palette(view_model().is_dark_mode());
     const bool list = mode_ == Mode::List;
 
+    if (mode_ == Mode::Rename) {
+        for (auto* row : rows_) lv_obj_add_flag(row, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(headline_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(detail_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(headline_, (rename_buffer_ + "_").c_str());
+        lv_label_set_text(detail_, ("Now: " + rename_from_).c_str());
+        lv_obj_set_style_text_color(headline_, colors.primary, 0);
+        lv_obj_set_style_text_color(detail_, colors.text_disabled, 0);
+        lv_label_set_text(hint_, "ENTER save    DEL erase    ESC cancel");
+        lv_obj_set_style_text_color(hint_, colors.text_disabled, 0);
+        return;
+    }
+
     for (int i = 0; i < kVisibleRows; ++i) {
         const int idx = offset_ + i;
         const bool visible = list && idx < item_count();
@@ -303,8 +370,8 @@ void SubGhzScreen::refresh() {
         lv_label_set_text(status_label_, status_line_.c_str());
         lv_obj_set_style_text_color(status_label_, colors.success, 0);
         lv_label_set_text(hint_,
-                          selection_ == 0 ? "ENTER  record       F / X  move"
-                                          : "ENTER  replay    D  delete    F / X  move");
+                          selection_ == 0 ? "ENTER record      F / X move"
+                                          : "ENTER replay   R rename   D delete");
     } else {
         lv_obj_remove_flag(headline_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(detail_, LV_OBJ_FLAG_HIDDEN);

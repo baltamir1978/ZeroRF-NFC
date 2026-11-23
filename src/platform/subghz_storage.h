@@ -25,4 +25,7 @@ std::string unique_signal_name(const std::string& base);
 // Borra la señal `name`. Devuelve si se borró.
 bool delete_signal(const std::string& name);
 
+// Cambia el nombre de una señal guardada. false si el nuevo ya existe o no se puede.
+bool rename_signal(const std::string& from, const std::string& to);
+
 } // namespace platform

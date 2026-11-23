@@ -35,6 +35,9 @@ public:
 
     /** Enciende el cap y prepara el SPI del NFC. false + `error()` si algo falla. */
     bool power_on_nfc();
+    /** Solo las líneas de alimentación del cap (POWER_EN GPIO26 + ext_5v), sin overlay de NFC.
+     *  Lo que necesita el CC1101 (su SPI es /dev/spidev0.1, que ya existe). */
+    bool power_on_rails();
     void power_off();
 
     const std::string& error() const {

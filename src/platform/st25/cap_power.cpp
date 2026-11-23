@@ -105,7 +105,7 @@ void CapPower::release_power_en() {
     }
 }
 
-bool CapPower::power_on_nfc() {
+bool CapPower::power_on_rails() {
     error_.clear();
     if (!hold_power_en()) {
         return false;
@@ -117,7 +117,13 @@ bool CapPower::power_on_nfc() {
     }
     on_ = true;
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    return true;
+}
 
+bool CapPower::power_on_nfc() {
+    if (!power_on_rails()) {
+        return false;
+    }
     if (!exists(kNfcSpiDevice)) {
         run_as_root(std::string("dtoverlay ") + kOverlay);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));

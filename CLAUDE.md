@@ -106,6 +106,20 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.4.0 (23-nov-2026) — Sub-GHz COMPLETO en la app (captura + reemisión reales) + renombrar.**
+  `platform::Cc1101` ya habla con el radio en el aparato (antes era sim/stub): `run_receive_device`
+  (preset Ook650, RF_SW0=GPIO14=1, captura los flancos de GDO0=GPIO15 con GPIO v2, extrae una trama
+  limpia y la guarda como `Signal`) y `run_transmit_device` (OOK async, GPIO15 como salida con
+  espera activa bajo **SCHED_FIFO**, repite la trama). Reusa `cc::Cc1101` (driver) y `CapPower`
+  (nuevo `power_on_rails()`: POWER_EN+5V sin el overlay de NFC). La **pantalla Sub-GHz** graba,
+  guarda, reemite, borra **y renombra** (tecla **R** sobre una señal guardada → escribir nombre →
+  ENTER; `platform::rename_signal`, igual que en NFC), así se pueden guardar varios mandos con
+  nombre. El `.deb` da **CAP_SYS_NICE** al binario (postinst + dep `libcap2-bin`) para que el TX
+  tenga tiempo real sin correr como root (acceso SPI/GPIO por los grupos spi/gpio de bruno).
+  Probado en el simulador (grabar+renombrar) y el driver por CLI en el aparato. **Falta la prueba
+  real desde la app en el aparato**: grabar el mando, y que **reemitir abra el garaje** (llevar el
+  Cardputer a la puerta; si no abre, el pin RF_SW de TX podría ser el contrario — hoy fijo a 1).
+
 - **CC1101 / Sub-GHz — driver portado y chip detectado en el aparato (23-nov-2026).** Decidido por
   Bruno pasar a **GPL-3.0-or-later** y copiar de Flipper. Portado su `cc1101_regs.h` (mapa de
   registros, GPLv3) y escrito `src/platform/cc1101/cc1101.{h,cpp}` sobre **spidev** (`/dev/spidev0.1`,

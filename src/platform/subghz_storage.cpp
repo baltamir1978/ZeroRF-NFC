@@ -77,4 +77,16 @@ bool delete_signal(const std::string& name) {
     return fs::remove(signal_path(name), ec);
 }
 
+bool rename_signal(const std::string& from, const std::string& to) {
+    std::error_code ec;
+    if (from == to) {
+        return true;
+    }
+    if (to.empty() || fs::exists(signal_path(to), ec)) {
+        return false;
+    }
+    fs::rename(signal_path(from), signal_path(to), ec);
+    return !ec;
+}
+
 } // namespace platform

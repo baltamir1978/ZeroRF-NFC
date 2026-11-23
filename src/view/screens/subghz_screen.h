@@ -30,7 +30,7 @@ protected:
     void build_content(lv_obj_t* content) override;
 
 private:
-    enum class Mode { List, Receiving, Transmitting };
+    enum class Mode { List, Receiving, Transmitting, Rename };
 
     bool handle_key(uint32_t key);
     bool handle_back();
@@ -43,6 +43,8 @@ private:
     void start_receive();
     void start_transmit();
     void delete_selected();
+    void start_rename();
+    void finish_rename();
     void on_received();
 
     static void poll_timer_cb(lv_timer_t* timer);
@@ -54,6 +56,8 @@ private:
     Mode mode_ = Mode::List;
     std::string status_line_;
     std::string tx_name_;
+    std::string rename_buffer_;
+    std::string rename_from_;
 
     std::array<lv_obj_t*, kVisibleRows> rows_{};
     std::array<lv_obj_t*, kVisibleRows> row_labels_{};

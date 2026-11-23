@@ -69,6 +69,10 @@ private:
     void join_worker();
     void run_receive(uint32_t frequency_hz);
     void run_transmit(subghz::Signal signal, int repeats);
+#if !USE_DESKTOP
+    void run_receive_device(uint32_t frequency_hz);
+    void run_transmit_device(const subghz::Signal& signal, int repeats);
+#endif
     void set_state(State state, const std::string& error = "");
 
     const bool simulated_;
