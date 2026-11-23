@@ -62,8 +62,6 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/store/icon.png"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/APPLaunch/share/images"
     RENAME "zeronfc.png")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/README.md" DESTINATION "${CMAKE_INSTALL_DOCDIR}")
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/zeronfc-sudoers"
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/zeronfc")
 
 set(CPACK_GENERATOR "DEB")
 set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
@@ -79,7 +77,6 @@ set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${APP_PACKAGE_DESCRIPTION}")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "libc6, libstdc++6, libgcc-s1, sudo")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
-set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
-    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/postinst"
-    "${CMAKE_CURRENT_SOURCE_DIR}/packaging/prerm")
+# NO se instala ningún fichero en /etc/sudoers.d: el usuario del Cardputer ya tiene sudo sin
+# contraseña (Raspberry Pi Imager), así que el `.desktop` abre con `sudo -n` y basta.
 include(CPack)
