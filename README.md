@@ -29,19 +29,20 @@ En el propio Cardputer (Debian arm64), o copiando `src/` al aparato:
 g++ -std=c++17 -O2 -o zeronfc src/main.cpp src/st25r3916.cpp
 ```
 
-El Cap necesita alimentación antes de usarse. El binario enciende `ext_5v_out` y carga el overlay
-SPI, **pero el POWER_EN del Cap (GPIO26) hay que mantenerlo aparte** mientras corre (pendiente
-integrarlo en el binario):
+El binario es autónomo: enciende la alimentación del Cap (POWER_EN en GPIO26 vía ioctl al
+chardev, y `ext_5v_out`) y carga el overlay SPI él mismo. Necesita `sudo` (acceso a
+`/dev/gpiochip0`, `/dev/spidev0.2` y `/sys/class/leds`).
 
 ```sh
-sudo gpioset -c gpiochip0 26=1 &      # mantener en segundo plano
 sudo ./zeronfc detect                 # leer UID de una tarjeta NFC-A
 sudo ./zeronfc read                   # volcar las páginas (Type 2)
-sudo ./zeronfc scan                   # identificar la tecnología
+sudo ./zeronfc write 4 DEADBEEF       # escribir una página de usuario
+sudo ./zeronfc save tarjeta.dump      # guardar el volcado
+sudo ./zeronfc load tarjeta.dump      # cargarlo en otra tarjeta (clonar memoria)
+sudo ./zeronfc scan                   # identificar la tecnología (A/B/V/F)
 sudo ./zeronfc sense                  # ¿acopla a 13,56 MHz?
 ```
 
 ## Pendiente
 
-Escribir y clonar Type 2, guardar/cargar volcados, MIFARE Classic (Crypto1), emulación de
-tarjeta (modo target), integrar el POWER_EN en el binario, y la interfaz LVGL + empaquetado `.deb`.
+MIFARE Classic (Crypto1), emulación de tarjeta (modo target), y la interfaz LVGL + empaquetado `.deb`.

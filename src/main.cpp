@@ -9,11 +9,18 @@
 #include <string>
 #include <thread>
 
+#include <fcntl.h>
+#include <linux/gpio.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+
 #include "st25r3916.h"
 
 static const char* kPowerLed = "/sys/class/leds/ext_5v_out/brightness";
 static const char* kSpiDev = "/dev/spidev0.2";
 static const char* kOverlay = "spi0-spidev2-gpio22-overlay";
+static const char* kGpioChip = "/dev/gpiochip0";
+static const int kPowerEnLine = 26;  // GPIO26 = POWER_EN del Cap
 
 static bool write_sysfs(const char* path, const char* val) {
     std::ofstream f(path);
@@ -22,9 +29,40 @@ static bool write_sysfs(const char* path, const char* val) {
     return f.good();
 }
 
+// Mantiene GPIO26 (POWER_EN del Cap) como salida a 1 mientras estos descriptores sigan abiertos.
+static int g_gpiochip_fd = -1, g_powerline_fd = -1;
+
+static void poweren_on() {
+    if (g_powerline_fd >= 0) return;
+    g_gpiochip_fd = ::open(kGpioChip, O_RDWR | O_CLOEXEC);
+    if (g_gpiochip_fd < 0) { fprintf(stderr, "aviso: no pude abrir %s\n", kGpioChip); return; }
+    struct gpio_v2_line_request req;
+    memset(&req, 0, sizeof(req));
+    req.offsets[0] = kPowerEnLine;
+    req.num_lines = 1;
+    strncpy(req.consumer, "zeronfc", sizeof(req.consumer) - 1);
+    req.config.flags = GPIO_V2_LINE_FLAG_OUTPUT;
+    req.config.num_attrs = 1;
+    req.config.attrs[0].attr.id = GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES;
+    req.config.attrs[0].attr.values = 1;  // bit 0 = valor de offsets[0]
+    req.config.attrs[0].mask = 1;
+    if (ioctl(g_gpiochip_fd, GPIO_V2_GET_LINE_IOCTL, &req) < 0 || req.fd < 0) {
+        fprintf(stderr, "aviso: no pude poner POWER_EN (GPIO26) alto\n");
+        ::close(g_gpiochip_fd); g_gpiochip_fd = -1; return;
+    }
+    g_powerline_fd = req.fd;  // mantener abierto = línea retenida en alto
+}
+
+static void poweren_off() {
+    if (g_powerline_fd >= 0) { ::close(g_powerline_fd); g_powerline_fd = -1; }
+    if (g_gpiochip_fd >= 0) { ::close(g_gpiochip_fd); g_gpiochip_fd = -1; }
+}
+
 static void cap_power(bool on) {
-    if (!write_sysfs(kPowerLed, on ? "1" : "0"))
+    if (on) poweren_on();                         // POWER_EN (GPIO26) alto
+    if (!write_sysfs(kPowerLed, on ? "1" : "0"))  // EXT5V
         fprintf(stderr, "aviso: no pude %s ext_5v_out (¿permisos?)\n", on ? "encender" : "apagar");
+    if (!on) poweren_off();
 }
 
 static bool ensure_spidev() {
