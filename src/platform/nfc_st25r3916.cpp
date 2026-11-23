@@ -4,10 +4,16 @@
 
 #include "nfc_st25r3916.h"
 
+#include "st25/cap_power.h"
+#include "st25/st25r3916.h"
+
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <thread>
+#include <vector>
 
 namespace platform {
 namespace {
@@ -64,6 +70,72 @@ nfc::Card make_fake_ntag() {
     }
     card.memory[p++] = 0xFE;
     return card;
+}
+
+// --- Aparato: el driver real (st25/, escrito y probado en cpzero desde plex el 23-nov-2026) ---
+
+void sleep_ms(int ms) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+
+// Un intento de selección NFC-A. Ciclar el campo en cada intento resetea la tarjeta: sin eso,
+// una tarjeta que se quedó a medias no vuelve a contestar (aprendido en el aparato).
+bool select_once(st25::St25r3916& chip, st25::PiccA& picc) {
+    chip.fieldOff();
+    sleep_ms(15);
+    chip.fieldOn();
+    sleep_ms(6);
+    return chip.activateA(picc);
+}
+
+uint16_t atqa_of(const st25::PiccA& picc) {
+    return static_cast<uint16_t>((picc.atqa[1] << 8) | picc.atqa[0]);
+}
+
+// Páginas de una Type 2 según GET_VERSION (byte 6 = tamaño). 0 = no se sabe.
+int type2_pages(st25::St25r3916& chip) {
+    uint8_t ver[16];
+    int len = 0;
+    if (!chip.type2GetVersion(ver, len) || len < 8 || ver[1] != 0x04) {
+        return 16; // Ultralight clásica: no tiene GET_VERSION y son 16 páginas
+    }
+    switch (ver[6]) {
+    case 0x0B: return 20;  // Ultralight EV1 (48 B)
+    case 0x0E: return 41;  // Ultralight EV1 (128 B)
+    case 0x0F: return 45;  // NTAG213
+    case 0x11: return 135; // NTAG215
+    case 0x13: return 231; // NTAG216
+    default: return 0;
+    }
+}
+
+// Vuelca la memoria de una Type 2 (NTAG/Ultralight) en `card`. La tarjeta tiene que estar
+// seleccionada; se vuelve a seleccionar tras GET_VERSION porque, si no lo entiende, se calla.
+void dump_type2(st25::St25r3916& chip, st25::PiccA& picc, nfc::Card& card) {
+    int pages = type2_pages(chip);
+    if (!select_once(chip, picc)) {
+        return;
+    }
+    const int limit = pages > 0 ? pages : 256;
+    std::vector<uint8_t> memory;
+    uint8_t first[16] = {0};
+    for (int page = 0; page < limit; page += 4) {
+        uint8_t buf[16];
+        if (!chip.type2Read(static_cast<uint8_t>(page), buf)) {
+            break;
+        }
+        if (page == 0) {
+            std::memcpy(first, buf, 16);
+        } else if (pages == 0 && page >= 16 && std::memcmp(buf, first, 16) == 0) {
+            break; // tamaño desconocido: la memoria «da la vuelta» al llegar al final
+        }
+        const int keep = std::min(4, limit - page);
+        memory.insert(memory.end(), buf, buf + keep * 4);
+    }
+    if (!memory.empty()) {
+        card.memory = std::move(memory);
+        card.block_size = 4;
+    }
 }
 
 } // namespace
@@ -137,9 +209,7 @@ nfc::Card NfcSt25r3916::scanned() const {
 
 void NfcSt25r3916::run_scan() {
     if (!simulated_) {
-        // TODO(aparato): inicializar el ST25R3916 por SPI (modo 1, CS=G22, IRQ=G23), hacer el
-        // anticolisión ISO-A, leer UID/ATQA/SAK y volcar las páginas. Ver cardputer-caps-hardware.
-        set_state(State::Failed, "NFC driver not implemented yet");
+        run_scan_device();
         return;
     }
 
@@ -164,9 +234,9 @@ void NfcSt25r3916::run_scan() {
     set_state(State::Stopped);
 }
 
-void NfcSt25r3916::run_emulate(nfc::Card /*card*/) {
+void NfcSt25r3916::run_emulate(nfc::Card card) {
     if (!simulated_) {
-        set_state(State::Failed, "NFC driver not implemented yet");
+        run_emulate_device(card);
         return;
     }
     // Emular es «estar presente» hasta que se pida parar.
@@ -174,6 +244,94 @@ void NfcSt25r3916::run_emulate(nfc::Card /*card*/) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         std::lock_guard<std::mutex> lock(mutex_);
         ++status_.activity;
+    }
+    set_state(State::Stopped);
+}
+
+void NfcSt25r3916::run_scan_device() {
+    // `power` se declara antes que `chip`: se destruye después, así el SPI se cierra con el cap
+    // aún encendido.
+    CapPower power;
+    if (!power.power_on_nfc()) {
+        set_state(State::Failed, power.error());
+        return;
+    }
+    st25::St25r3916 chip;
+    if (!chip.open(CapPower::kNfcSpiDevice)) {
+        set_state(State::Failed, "Cannot open the NFC SPI");
+        return;
+    }
+    const st25::InitStatus init = chip.init();
+    if (!init.ok) {
+        set_state(State::Failed, "NFC chip init failed: " + init.error);
+        return;
+    }
+
+    // Sólo NFC-A (lo único validado con tarjetas en el aparato). B/V/F están en el driver pero
+    // escritos sin tarjeta de referencia: se usan desde `Tools/zeronfc` para diagnosticar.
+    while (!stop_) {
+        st25::PiccA picc;
+        if (select_once(chip, picc)) {
+            nfc::Card card;
+            card.tech = nfc::Tech::IsoA;
+            card.atqa = atqa_of(picc);
+            card.sak = picc.sak;
+            card.uid.assign(picc.uid, picc.uid + picc.uid_len);
+            card.type = nfc::detect_card_type(card.atqa, card.sak);
+            if ((picc.sak & 0x7F) == 0x00) {
+                dump_type2(chip, picc, card);
+            }
+            chip.fieldOff();
+            std::lock_guard<std::mutex> lock(mutex_);
+            scanned_ = std::move(card);
+            status_.state = State::Found;
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++status_.activity;
+        }
+        sleep_ms(50);
+    }
+    chip.fieldOff();
+    set_state(State::Stopped);
+}
+
+void NfcSt25r3916::run_emulate_device(const nfc::Card& card) {
+    // El chip responde solo al anticolisión/SELECT; el driver atiende READ con el volcado. Sirve
+    // para NTAG/Ultralight; Classic/DESFire necesitan cripto y no se emulan.
+    if (card.tech != nfc::Tech::IsoA || (card.uid.size() != 4 && card.uid.size() != 7)) {
+        set_state(State::Failed, "Only NFC-A cards with a 4/7-byte UID");
+        return;
+    }
+    if (card.block_size != 4 || card.memory.empty()) {
+        set_state(State::Failed, "Only NTAG/Ultralight dumps can be emulated");
+        return;
+    }
+    st25::PiccA picc;
+    picc.atqa[0] = static_cast<uint8_t>(card.atqa & 0xFF);
+    picc.atqa[1] = static_cast<uint8_t>(card.atqa >> 8);
+    picc.sak = card.sak;
+    picc.uid_len = static_cast<uint8_t>(card.uid.size());
+    std::copy(card.uid.begin(), card.uid.end(), picc.uid);
+
+    CapPower power;
+    if (!power.power_on_nfc()) {
+        set_state(State::Failed, power.error());
+        return;
+    }
+    st25::St25r3916 chip;
+    if (!chip.open(CapPower::kNfcSpiDevice)) {
+        set_state(State::Failed, "Cannot open the NFC SPI");
+        return;
+    }
+    st25::St25r3916::EmuStats stats;
+    std::string error;
+    const bool ok = chip.runEmulationA(picc, card.memory.data(), static_cast<int>(card.memory.size()),
+                                       0, stats, error, &stop_);
+    if (!ok) {
+        set_state(State::Failed, error);
+        return;
     }
     set_state(State::Stopped);
 }

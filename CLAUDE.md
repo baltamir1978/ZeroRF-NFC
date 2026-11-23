@@ -68,14 +68,21 @@ Tools/compilar.sh simulador # abre el simulador en este escritorio (X11)
 Cableado deducido (docs M5Stack + esquemáticos + repo `osprey74/cardputerzero-apps`); el detalle
 está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **BCM** del CM0:
 
-- **SPI0** (`/dev/spidev0.1`, CE1): SCLK=G11, MOSI=G10, MISO=G9. Comparten bus el CC1101 y el
-  ST25R3916: **solo uno activo a la vez**.
+- **SPI0**: SCLK=G11, MOSI=G10, MISO=G9. Comparten bus el CC1101 y el ST25R3916: **solo uno
+  activo a la vez**.
 - **CC1101**: CS=G7 (CE1), GDO0=G15, RF_SW0=G14, POWER_EN=G26. Bandas 315/433/868/915; OOK/ASK.
-- **ST25R3916**: CS=G22 (manual, SPI modo 1), IRQ=G23. 13.56 MHz, FIFO 512 B.
-- **5V del cap**: escribir `1` en `/sys/class/leds/ext_5v_out/brightness`.
-- **Sin verificar (requiere el aparato):** selección de banda 433 del CC1101 (al conector solo
-  llega RF_SW0=G14, pero el truth table usa RF_SW0 **y** RF_SW1); mode/reset exactos del
-  ST25R3916. Se escribe directo al kernel (spidev + libgpiod), como `ir_blaster` hacía con LIRC.
+- **ST25R3916** (**verificado en el aparato el 23-nov-2026**, `IC_IDENTITY`=0x2A): SPI modo 1 por
+  **`/dev/spidev0.2`** (CS2=GPIO22, lo gestiona el kernel), que crea el overlay
+  `spi0-spidev2-gpio22-overlay`; IRQ=G23. Encender el cap son tres cosas (sacadas trazando la app
+  oficial): `ext_usb_gpio_fun` **en 0**, **GPIO26=1 retenido** mientras se usa (sin él el chip
+  habla SPI pero la antena no tiene corriente) y `ext_5v_out`=1. Todo eso lo hace
+  `src/platform/st25/cap_power.*`; lo que pide root va con `sudo -n`.
+- **Lecciones del chip** (en los comentarios de `st25r3916.cpp`): esperar I_rxe (no I_rxs) antes
+  de leer el FIFO; ciclar el campo (15 ms apagado + 6 ms) en cada sondeo; el ACK de escritura
+  Type 2 son 4 bits sin CRC; `tx_on` y `MEASURE_AMPLITUDE` no indican si hay campo (sí I_txe).
+- **Sin verificar:** selección de banda 433 del CC1101 (al conector solo llega RF_SW0=G14, pero
+  el truth table usa RF_SW0 **y** RF_SW1) y si el CC1101 va por CE1 (`spidev0.1`) o necesita
+  otro overlay como el NFC.
 
 ## Convenciones del aparato que la app respeta
 
@@ -98,6 +105,28 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
   (`Tools/generar_icono.py` todavía dibuja el de TV-B-Gone).
 
 ## Estado
+
+- **0.2.0 (23-nov-2026) — NFC con el driver real; sin probar en el aparato la app integrada.**
+  - El 23-nov-2026 la sesión «CPZero» de `plex` trabajó todo el día sobre el aparato, pero **en
+    un proyecto nuevo** (`plex:~/CPZero/ZeroRF-NFC`, sin este repo, que no estaba en GitHub): CLI
+    + una UI LVGL mínima aparte. Su historial está fusionado aquí (rama `plex`, «ours»: se
+    conserva la historia, no su árbol). De allí se trajo lo que valía:
+    `src/platform/st25/st25r3916.*` (driver propio, registros de M5Unit-NFC —MIT, en
+    `reference/`—), `crypto1.h` (Crypto1 de M5Unit-NFC) y el CLI en `Tools/zeronfc/` (se compila
+    en el aparato: `g++ -std=c++17 -O2 -Isrc/platform/st25 Tools/zeronfc/main.cpp src/platform/st25/st25r3916.cpp`).
+  - `platform::NfcSt25r3916` ya usa el chip en el aparato: escanear = NFC-A + volcado Type 2
+    completo (tamaño por GET_VERSION: UL, UL EV1, NTAG213/215/216); emular = NTAG/Ultralight
+    desde un `.nfc` guardado, con «parar» desde la UI (se añadió `stop` a `runEmulationA`).
+  - **Validado en el aparato (con el CLI, en plex):** lectura NFC-A, volcado, escritura y clonado
+    Type 2. **Escrito pero sin validar:** emulación (el móvil de Bruno no leía ni la NTAG buena),
+    NFC-B/V/F y iCLASS (sin tarjetas de referencia), MIFARE Classic por el aire (falta la
+    autenticación RF; Bruno no tiene Classic). Una tarjeta de acceso probada no contesta a
+    ningún protocolo estándar: propietaria (¿iCLASS/LEGIC?), territorio Proxmark; no insistir.
+  - Tarjetas de prueba de Bruno: una NTAG (UID 7 B) y una **NTAG215**. Para validar NFC-V
+    harían falta etiquetas ISO15693; UHF (Monza M750) no se puede con este cap.
+  - Pendiente: probar la app en cpzero (¿hace falta el `chown` de `/dev/gpiochip0` y
+    `/dev/spidev0.2` de `cap_power.cpp` o bruno ya está en los grupos?), escribir tarjetas desde
+    la UI, backend real del CC1101.
 
 - **20-nov-2026 (sin versión nueva)**: arreglado en `app.cpp` el núcleo al 100 % que traía la
   plantilla (sin `lv_delay_set_cb`, `lv_delay_ms` esperaba dando vueltas; lo cazó ZeroGPS).

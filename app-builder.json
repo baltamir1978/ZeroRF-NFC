@@ -2,7 +2,7 @@
   "app_name": "ZeroRF-NFC",
   "package_name": "zerorfnfc",
   "bin_name": "zerorfnfc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sub-GHz and NFC tools for the CardputerZero CC1101+NFC cap",
 
   "store": {

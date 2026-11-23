@@ -17,7 +17,8 @@ namespace platform {
  * El lector NFC del Cap (ST25R3916, 13.56 MHz). Escanea una tarjeta y la emula, en un hilo
  * aparte, como `Cc1101`. En el simulador (y con `ZERORFNFC_NFC=sim` en el aparato) usa un
  * backend **simulado** que «encuentra» una NTAG con un NDEF dentro, para probar la interfaz.
- * En el aparato hablará por `/dev/spidev0.1` + libgpiod (todavía no implementado).
+ * En el aparato usa el driver de `st25/` por `/dev/spidev0.2` (CS2 = GPIO22), con el cap
+ * encendido por `CapPower`.
  */
 class NfcSt25r3916 {
 public:
@@ -59,6 +60,8 @@ private:
     void join_worker();
     void run_scan();
     void run_emulate(nfc::Card card);
+    void run_scan_device();
+    void run_emulate_device(const nfc::Card& card);
     void set_state(State state, const std::string& error = "");
 
     const bool simulated_;
