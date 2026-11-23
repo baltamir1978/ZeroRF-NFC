@@ -57,11 +57,11 @@ Tools/compilar.sh simulador # abre el simulador en este escritorio (X11)
 - **NFC**: el **driver oficial de Linux del ST25R3916 de ST**
   (`github.com/STMicroelectronics/st25r3916`) + la pila NFC del **Flipper** (mismo chip).
 
-> **Licencias (pendiente de decidir al portar código):** el Flipper es **GPLv3**; reutilizar su
-> código obligaría a publicar ZeroRF-NFC como GPLv3 (hoy el `app-builder.json` dice MIT). Bruce y
-> el driver de ST tienen sus propias licencias. Antes de copiar código de esos proyectos hay que
-> decidir la licencia de ZeroRF-NFC y ajustar `LICENSE` y la ficha. Mientras sea código propio
-> (como ahora), es MIT.
+> **Licencia: GPL-3.0-or-later** (decidido por Bruno el 23-nov-2026). El lado Sub-GHz porta el
+> driver y el mapa de registros del **CC1101 del Flipper Zero (GPLv3)**, así que toda la app es
+> GPLv3 (`LICENSE` = GPL-3, `app-builder.json` = `GPL-3.0-or-later`). El lado NFC (ST25R3916,
+> Crypto1) viene de M5Unit-NFC (MIT), compatible bajo GPLv3. Los ficheros portados del Flipper
+> llevan su cabecera GPLv3 y la atribución.
 
 ## Hardware (Cap CC1101+NFC)
 
@@ -105,6 +105,17 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
   (`Tools/generar_icono.py`: ondas en ámbar sobre violeta).
 
 ## Estado
+
+- **CC1101 / Sub-GHz — driver portado y chip detectado en el aparato (23-nov-2026).** Decidido por
+  Bruno pasar a **GPL-3.0-or-later** y copiar de Flipper. Portado su `cc1101_regs.h` (mapa de
+  registros, GPLv3) y escrito `src/platform/cc1101/cc1101.{h,cpp}` sobre **spidev** (`/dev/spidev0.1`,
+  CS=CE1=GPIO7; SPI modo 0): reset, strobes, read/write reg y burst, part/version, setFrequency,
+  PA table, RX/TX, FIFO, MARCSTATE. **Confirmado en cpzero** con `zeronfc cc1101`: part=0x00,
+  version=0x14, resetea, acepta 433,92 MHz (MARCSTATE idle). Alimentación = la del cap (POWER_EN
+  GPIO26 + ext_5v, vía `cap_power`/`CapPower`). **Falta:** el preset OOK/ASK 433 (registros de
+  Flipper/Bruce), capturar la señal cruda por **GDO0 (GPIO15) con libgpiod** (timings), decodificar
+  (ya hay Princeton/EV1527) y reemitir; y confirmar la **banda con RF_SW0 (GPIO14)**. Luego llevarlo
+  a `platform::Cc1101` (hoy sim/stub) y a la pantalla Sub-GHz. Objetivo: el mando del garaje.
 
 - **0.3.0 (23-nov-2026) — tipo exacto en la pantalla + icono propio.** Al escanear, además del UID
   y el tipo, se lee **GET_VERSION** (NTAG/Ultralight → "NTAG215 (504 B)", etc.) y el **ATS** de las

@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "st25r3916.h"
+#include "../../src/platform/cc1101/cc1101.h"
 
 static const char* kPowerLed = "/sys/class/leds/ext_5v_out/brightness";
 static const char* kSpiDev = "/dev/spidev0.2";
@@ -245,6 +246,32 @@ static const char* kClassicKeys[] = {
     "B0B1B2B3B4B5", "4D3A99C351DD", "1A982C7E459A", "AABBCCDDEEFF",
     "714C5C886E97", "587EE5F9350F", "A0478CC39091", "533CB6C723F6", "8FD0A4F256E9",
 };
+
+// Detecta el CC1101 (Sub-GHz) por /dev/spidev0.1. Primer hito del garaje: confirmar cableado.
+static int cmd_cc1101(bool vdd5) {
+    (void)vdd5;
+    cap_power(true);  // POWER_EN + 5V del cap (lo mismo que para el NFC)
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    cc::Cc1101 radio;
+    if (!radio.open()) { fprintf(stderr, "ERROR: no pude abrir %s\n", cc::Cc1101::kSpiDevice); cap_power(false); return 2; }
+    bool rdy = radio.reset();
+    uint8_t part = radio.partNumber();
+    uint8_t ver = radio.version();
+    printf("CC1101 en %s:\n", cc::Cc1101::kSpiDevice);
+    printf("  reset listo : %s\n", rdy ? "sí" : "no");
+    printf("  part number : 0x%02X (se espera 0x00)\n", part);
+    printf("  version     : 0x%02X (se espera 0x14, a veces 0x04/0x17)\n", ver);
+    if (radio.present()) {
+        uint32_t f = radio.setFrequency(433920000);
+        printf("  -> CC1101 DETECTADO. Frecuencia de prueba fijada a %u Hz\n", f);
+        printf("     MARCSTATE=0x%02X\n", radio.marcState());
+    } else {
+        printf("  -> NO responde como CC1101. Revisar cableado/CS/alimentación (RF_SW, POWER_EN).\n");
+    }
+    radio.close();
+    cap_power(false);
+    return radio.present() ? 0 : 1;
+}
 
 static int cmd_classic(bool vdd5) {
     cap_power(true);
@@ -904,6 +931,7 @@ int main(int argc, char** argv) {
     if (sub == "iclass") return cmd_iclass(vdd5);
     if (sub == "identify" || sub == "id") return cmd_identify(vdd5);
     if (sub == "classic") return cmd_classic(vdd5);
+    if (sub == "cc1101") return cmd_cc1101(vdd5);
     if (sub == "sense") return cmd_sense(vdd5, secs);
     if (sub == "rf") return cmd_rf(vdd5);
     if (sub == "dump") return cmd_dump(vdd5);

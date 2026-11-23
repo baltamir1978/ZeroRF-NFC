@@ -61,5 +61,6 @@ Still missing: the real CC1101 driver, MIFARE Classic over the air, writing card
 
 ## License
 
-MIT (see `LICENSE`). This may change to GPLv3 if code is ported from GPL-licensed projects
-(e.g. Flipper Zero firmware); see the note in `CLAUDE.md`.
+GPL-3.0-or-later (see `LICENSE`). The Sub-GHz side ports the CC1101 driver and register map from
+the Flipper Zero firmware (GPLv3), so the whole app is GPLv3. The NFC side (ST25R3916 driver,
+Crypto1) keeps its M5Unit-NFC (MIT) origins, compatible under GPLv3.

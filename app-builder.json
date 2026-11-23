@@ -13,7 +13,7 @@
       "screenshot/home.png"
     ],
     "icon": "store/icon.png",
-    "license": "MIT",
+    "license": "GPL-3.0-or-later",
     "source_repo": "https://github.com/baltamir1978/ZeroRF-NFC",
     "author": { "github": "baltamir1978", "display_name": "baltamir1978" },
     "locales": {
