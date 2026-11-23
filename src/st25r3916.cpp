@@ -530,20 +530,24 @@ bool St25r3916::nfcvInventory(uint8_t* raw, int& len) {
 bool St25r3916::iclassIdentify(uint8_t* raw, int& len) {
     len = 0;
     // Envía una trama iCLASS sobre la capa ISO15693 (SOF 1-de-4 + bytes + EOF).
+    // Tramas iCLASS sobre ISO15693 1-de-4, como la app Picopass del Flipper (nfc_poller_trx):
+    // ACTALL {0x0A} y IDENTIFY {0x0C}, ambos SIN CRC. FWT ~7,4 ms (NRT largo).
     auto sendFrame = [&](const uint8_t* d, int n, bool want_rx, uint8_t* rx, int& rxlen) -> bool {
         std::vector<uint8_t> enc;
         enc.push_back(0x21);  // SOF 1-de-4
         for (int i = 0; i < n; ++i) encode1of4(enc, d[i]);
         enc.push_back(0x04);  // EOF
-        prepTx(*this);
+        cmd(CMD_STOP_ALL);
+        cmd(CMD_RESET_RX_GAIN);
+        writeReg16(REG_NRT_1, 0x0A00);   // No-Response Timer largo (~>7ms) para iCLASS
         clearIrq();
         cmd(CMD_CLEAR_FIFO);
         fifoLoad(enc.data(), enc.size());
         writeReg16(REG_NUM_TX_BYTES_1, uint16_t((enc.size() & 0x1FF) << 3));
         cmd(CMD_TRANSMIT_WITHOUT_CRC);
-        if (!want_rx) { waitIrq(IRQ_TXE, 10); return true; }
+        if (!want_rx) { waitIrq(IRQ_TXE | IRQ_RXE | IRQ_NRE, 12); return true; }
         uint8_t buf[128], err;
-        int m = receiveFrame(*this, buf, sizeof(buf), 20, err);
+        int m = receiveFrame(*this, buf, sizeof(buf), 40, err);
         if (m <= 0) return false;
         uint8_t dec[64];
         int dn = decodeIso15693(buf, m, dec, sizeof(dec));
@@ -553,16 +557,10 @@ bool St25r3916::iclassIdentify(uint8_t* raw, int& len) {
         return true;
     };
     const uint8_t act_all[1]  = {0x0A};
-    const uint8_t identify[4] = {0x0C, 0x00, 0x73, 0x33};  // READ/IDENTIFY blk0 + CRC iCLASS
+    const uint8_t identify[1] = {0x0C};
     int rl = 0;
-    sendFrame(act_all, 1, false, nullptr, rl);
-    usleep(300);
-    if (sendFrame(identify, 4, true, raw, len) && len > 0) return true;
-    // Reintento con IDENTIFY de 1 byte (variante corta)
-    const uint8_t identify1[1] = {0x0C};
-    sendFrame(act_all, 1, false, nullptr, rl);
-    usleep(300);
-    return sendFrame(identify1, 1, true, raw, len) && len > 0;
+    sendFrame(act_all, 1, false, nullptr, rl);   // despierta (responde sólo SOF)
+    return sendFrame(identify, 1, true, raw, len) && len > 0;
 }
 
 void St25r3916::configureNfcF() {
