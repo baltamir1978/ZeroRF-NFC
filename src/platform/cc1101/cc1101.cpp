@@ -168,10 +168,12 @@ void Cc1101::configureOokTx(uint32_t freq_hz) {
     writeConfig(kOok650, sizeof(kOok650) / sizeof(kOok650[0]));
     setFrequency(freq_hz);
     setPaTable(kPaOok);
-    // GDO0 pasa a entrada asíncrona: el host marca el 1/0 de OOK por la línea GPIO15.
+    // GDO0 en alta impedancia: en modo serie asíncrono el CC1101 toma el dato de TX de ese pin,
+    // y lo conduce el host (GPIO15 como salida), sin que el chip lo pise. El caller: baja el dato,
+    // hace strobeTx() y luego marca los tiempos.
     writeReg(CC1101_IOCFG0, CC1101IocfgHighImpedance);
     flushTx();
-    strobeTx();
+    strobeIdle();
 }
 
 void Cc1101::strobeIdle() { strobe(CC1101_STROBE_SIDLE); }

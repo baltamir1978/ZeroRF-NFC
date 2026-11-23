@@ -13,6 +13,7 @@
 
 #include <poll.h>
 #include <time.h>
+#include <sched.h>
 
 #include <fcntl.h>
 #include <linux/gpio.h>
@@ -380,6 +381,148 @@ static int cmd_rfrx(int secs, int rfsw, double freq_mhz) {
         if (++shown % 12 == 0) printf("\n");
     }
     printf("\n");
+    return 0;
+}
+
+// Pone/quita el valor de una línea ya pedida como salida (ioctl por flanco; ~1us, aceptable
+// frente a pulsos de cientos de us).
+static inline void gpio_set(int line_fd, int value) {
+    gpio_v2_line_values v;
+    v.bits = value ? 1 : 0;
+    v.mask = 1;
+    ioctl(line_fd, GPIO_V2_LINE_SET_VALUES_IOCTL, &v);
+}
+
+// Espera activa de alta precisión (CLOCK_MONOTONIC) hasta `deadline`. Para pulsos de ~400us la
+// espera activa es más fiable que dormir (sin saltos del planificador).
+static inline void busy_until(const struct timespec& deadline) {
+    struct timespec now;
+    do {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+    } while (now.tv_sec < deadline.tv_sec ||
+             (now.tv_sec == deadline.tv_sec && now.tv_nsec < deadline.tv_nsec));
+}
+
+static inline void add_us(struct timespec& t, long us) {
+    t.tv_nsec += us * 1000L;
+    while (t.tv_nsec >= 1000000000L) { t.tv_nsec -= 1000000000L; ++t.tv_sec; }
+}
+
+// Carga los tiempos RAW_Data de un .sub (formato Flipper). Devuelve la frecuencia (0 si falla).
+static uint32_t load_sub(const std::string& path, std::vector<long>& durs) {
+    FILE* fp = fopen(path.c_str(), "r");
+    if (!fp) return 0;
+    uint32_t freq = 433920000;
+    durs.clear();
+    char* line = nullptr; size_t n = 0;
+    while (getline(&line, &n, fp) != -1) {
+        if (!strncmp(line, "Frequency:", 10)) freq = (uint32_t)atol(line + 10);
+        else if (!strncmp(line, "RAW_Data:", 9)) {
+            char* p = line + 9;
+            char* end = nullptr;
+            for (long v = strtol(p, &end, 10); end != p; v = strtol(p, &end, 10)) { durs.push_back(v); p = end; }
+        }
+    }
+    free(line); fclose(fp);
+    return durs.empty() ? 0 : freq;
+}
+
+// Devuelve el .sub más reciente de la carpeta de capturas, o "" si no hay.
+static std::string latest_sub() {
+    std::string dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.local/share/zerorfnfc/subghz";
+    std::string cmd = "ls -t '" + dir + "'/*.sub 2>/dev/null | head -1";
+    FILE* p = popen(cmd.c_str(), "r");
+    if (!p) return "";
+    char buf[512] = {0};
+    if (!fgets(buf, sizeof(buf), p)) { pclose(p); return ""; }
+    pclose(p);
+    std::string s(buf);
+    while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
+    return s;
+}
+
+// De una captura larga (con la trama repetida y ruido) saca UNA trama limpia: parte el tren por
+// los silencios largos (separadores entre repeticiones, > `gap_us`) y devuelve el segmento cuya
+// longitud es la más repetida (la trama de verdad). Así la reemisión es corta y limpia.
+static std::vector<long> extract_frame(const std::vector<long>& durs, long gap_us = 8000) {
+    std::vector<std::vector<long>> frames;
+    std::vector<long> cur;
+    for (long d : durs) {
+        if (d < 0 && -d > gap_us) {           // separador entre tramas
+            if (cur.size() >= 16) frames.push_back(cur);
+            cur.clear();
+        } else {
+            long a = d < 0 ? -d : d;
+            if (a >= 60) cur.push_back(d);     // descarta microglitches
+        }
+    }
+    if (cur.size() >= 16) frames.push_back(cur);
+    if (frames.empty()) return durs;           // no se pudo partir: devolver tal cual
+
+    // Longitud (nº de tramos) más frecuente entre las tramas candidatas.
+    std::map<size_t, int> hist;
+    for (auto& f : frames) ++hist[f.size()];
+    size_t best_len = 0; int best_n = 0;
+    for (auto& kv : hist) if (kv.second > best_n) { best_n = kv.second; best_len = kv.first; }
+    for (auto& f : frames) if (f.size() == best_len) return f;
+    return frames.front();
+}
+
+// Reemite una señal Sub-GHz grabada (código fijo). OOK async: el CC1101 pone la portadora y el
+// host marca los 1/0 por GDO0 (GPIO15 como salida), repitiendo la trama `repeats` veces.
+static int cmd_rftx(const std::string& file_arg, int repeats, int rfsw, double freq_override) {
+    std::string file = file_arg.empty() ? latest_sub() : file_arg;
+    if (file.empty()) { fprintf(stderr, "No hay .sub que reemitir (captura uno con rfrx).\n"); return 2; }
+    std::vector<long> durs;
+    uint32_t freq = load_sub(file, durs);
+    if (!freq) { fprintf(stderr, "No pude leer %s\n", file.c_str()); return 2; }
+    if (freq_override > 0) freq = (uint32_t)(freq_override * 1e6);
+    std::vector<long> frame = extract_frame(durs);
+    printf("Reemitiendo %s\n  captura %zu tramos -> trama limpia %zu tramos, %.3f MHz, RF_SW0=%d, %d repeticiones\n",
+           file.c_str(), durs.size(), frame.size(), freq / 1e6, rfsw, repeats);
+    durs = frame;
+
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    int chip = open("/dev/gpiochip0", O_RDWR | O_CLOEXEC);
+    if (chip < 0) { fprintf(stderr, "no gpiochip0\n"); cap_power(false); return 2; }
+    int sw = gpio_out_hold(chip, 14, rfsw);        // RF_SW0 (camino de RF)
+    int data = gpio_out_hold(chip, 15, 0);         // GDO0 = dato de TX, empieza en 0 (sin portadora)
+    if (data < 0) { fprintf(stderr, "no pude tomar GPIO15\n"); if(sw>=0)close(sw); close(chip); cap_power(false); return 2; }
+
+    cc::Cc1101 radio;
+    if (!radio.open() || !radio.present()) { fprintf(stderr, "CC1101 no responde\n"); close(data); if(sw>=0)close(sw); close(chip); cap_power(false); return 1; }
+    uint32_t f = radio.setFrequency(freq);
+    radio.configureOokTx(f);
+
+    // Prioridad de tiempo real para que los tiempos no bailen.
+    struct sched_param sp; sp.sched_priority = 80;
+    if (sched_setscheduler(0, SCHED_FIFO, &sp) != 0) printf("(aviso: sin SCHED_FIFO; puede haber jitter)\n");
+
+    radio.strobeTx();                              // entra en TX; la portadora la marca GDO0
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+    struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t);
+    for (int r = 0; r < repeats; ++r) {
+        for (long d : durs) {
+            long us = d < 0 ? -d : d;
+            if (us < 30) us = 30;                   // ignora microglitches del crudo
+            gpio_set(data, d > 0 ? 1 : 0);          // + alto (portadora on) / - bajo (off)
+            add_us(t, us);
+            busy_until(t);
+        }
+        gpio_set(data, 0);
+        add_us(t, 15000);                           // separación entre repeticiones
+        busy_until(t);
+    }
+    gpio_set(data, 0);
+
+    struct sched_param sp0; sp0.sched_priority = 0; sched_setscheduler(0, SCHED_OTHER, &sp0);
+    radio.strobeIdle();
+    radio.close();
+    close(data); if (sw >= 0) close(sw); close(chip);
+    cap_power(false);
+    printf("Hecho. Si no abre, prueba --rfsw %d (el camino de TX puede ser el otro).\n", rfsw ? 0 : 1);
     return 0;
 }
 
@@ -1049,8 +1192,8 @@ static bool parse4(const char* hex, uint8_t out[4]) {
 
 int main(int argc, char** argv) {
     bool vdd5 = false, keep_power = false, force = false;
-    int hold_ms = 0, secs = 15, rfsw = 1;
-    double freq_mhz = 433.92;
+    int hold_ms = 0, secs = 15, rfsw = 1, repeats = 10;
+    double freq_mhz = 433.92, freq_override_tx = 0;
     std::string sub = argc > 1 ? argv[1] : "init";
     std::vector<std::string> pos;  // argumentos posicionales (no-flag)
     for (int i = 2; i < argc; ++i) {
@@ -1060,10 +1203,12 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--hold") && i + 1 < argc) hold_ms = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--secs") && i + 1 < argc) secs = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--rfsw") && i + 1 < argc) rfsw = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--freq") && i + 1 < argc) freq_mhz = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--repeats") && i + 1 < argc) repeats = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--freq") && i + 1 < argc) { freq_mhz = atof(argv[++i]); freq_override_tx = freq_mhz; }
         else pos.push_back(argv[i]);
     }
     if (sub == "rfrx") return cmd_rfrx(secs ? secs : 6, rfsw, freq_mhz);
+    if (sub == "rftx") return cmd_rftx(pos.empty() ? "" : pos[0], repeats, rfsw, freq_override_tx);
     if (sub == "init") return cmd_init(vdd5, keep_power, hold_ms);
     if (sub == "detect") return cmd_detect(vdd5, secs);
     if (sub == "read") return cmd_read(vdd5, 232);

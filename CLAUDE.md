@@ -123,10 +123,16 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
     normal). Es **código fijo** igualmente, así que se clona **reemitiendo el crudo** (no hace
     falta decodificar). Hace falta antena para capturar/emitir (sin ella el CC1101 no capta y TX
     sin antena daña el chip).
-  - **Falta:** la **reemisión (TX)** — OOK async bit-bang de GDO0 con tiempos (jitter de
-    userspace: mejor con SCHED_FIFO); probar que **abre el garaje** (hay que llevar el Cardputer,
-    que es portátil, hasta la puerta). Luego llevarlo a `platform::Cc1101` (hoy sim/stub) y a la
-    pantalla Sub-GHz.
+  - **Reemisión (TX) implementada (23-nov-2026).** Comando `zeronfc rftx [fichero] [--repeats N]
+    [--rfsw 0|1] [--freq MHz]` (sin fichero usa el último `.sub`). OOK async: `configureOokTx`
+    (GDO0 en alta-Z), GPIO15 como **salida** que marca el 1/0 de la portadora, con espera activa
+    (`CLOCK_MONOTONIC`) bajo **SCHED_FIFO** para que los ~400 µs no bailen. `extract_frame()` saca
+    **una trama limpia** de la captura larga (parte por los silencios >8 ms y coge la longitud más
+    frecuente) y la repite N veces. Probado mecánicamente en el aparato: extrae 155 tramos (~77
+    bits) y reemite sin error. **Falta la prueba de verdad: que abra el garaje**, llevando el
+    Cardputer (portátil) a la puerta y corriendo `rftx`; si no abre, probar `--rfsw 0` (el camino
+    de TX del switch puede ser el contrario al de RX). Luego llevarlo a `platform::Cc1101` (hoy
+    sim/stub) y a la pantalla Sub-GHz.
 
 - **0.3.0 (23-nov-2026) — tipo exacto en la pantalla + icono propio.** Al escanear, además del UID
   y el tipo, se lee **GET_VERSION** (NTAG/Ultralight → "NTAG215 (504 B)", etc.) y el **ATS** de las
