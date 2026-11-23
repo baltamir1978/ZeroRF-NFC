@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RF / NFC
+Comment=@APP_PACKAGE_DESCRIPTION@
+Exec=/usr/bin/sudo -n /usr/bin/zeronfc
+Icon=share/images/zeronfc.png
+Terminal=false
+Categories=Utility;
+StartupNotify=false

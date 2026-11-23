@@ -1,9 +1,11 @@
 # binarios compilados
-zeronfc
-*.o
-*.so
 # salidas de diagnóstico / temporales
+build/
+.cache/
+dist/
+*.log
+*.o
 *.out
 *.rx
-*.log
-build/
+*.so
+zeronfc

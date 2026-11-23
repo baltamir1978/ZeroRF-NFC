@@ -1,0 +1,4 @@
+# ZeroRF-NFC necesita root para el SPI del NFC (/dev/spidev0.2), los GPIO (POWER_EN en
+# gpiochip0:26), los LED (ext_5v_out) y cargar el overlay SPI. El lanzador la abre con
+# `sudo -n`, y este fichero deja al grupo sudo ejecutarla sin contraseña.
+%sudo ALL=(root) NOPASSWD: /usr/bin/zeronfc

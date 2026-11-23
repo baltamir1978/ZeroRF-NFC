@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+if [ "$1" = "configure" ]; then
+    install -m 0440 -o root -g root /usr/share/zeronfc/zeronfc-sudoers /etc/sudoers.d/zeronfc 2>/dev/null || true
+fi
+exit 0

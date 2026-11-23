@@ -3,8 +3,24 @@
 Sub-GHz (CC1101) y NFC (ST25R3916) para el **M5Stack Cardputer Zero** con el Cap CC1101+NFC,
 sobre Debian/Linux. Repositorio de la app `RF / NFC` del lanzador.
 
-> Estado (23-nov-2026): en desarrollo. Hay un **núcleo NFC funcionando como herramienta de
-> línea de comandos** (`zeronfc`); la interfaz LVGL y el empaquetado `.deb` están pendientes.
+> Estado (23-nov-2026): **app del lanzador funcionando** (`RF / NFC`, interfaz LVGL + `.deb`),
+> con menú Leer / Identificar / Sub-GHz. El núcleo NFC también está como herramienta de línea
+> de comandos (`src/main.cpp`) para desarrollo.
+
+## La app del lanzador (UI + .deb)
+
+Interfaz LVGL sobre el framebuffer (320×170) con el teclado del Cardputer. Reutiliza el
+esqueleto de compilación de las otras apps Zero, pero en versión "lean": sin freetype/png,
+toolchain cruzado estándar (sin BSP de M5), así que el `.deb` sólo depende de libc/libstdc++.
+
+```sh
+Tools/compilar.sh          # compila en Docker (aarch64) y deja dist/ZeroRF-NFC_*.deb
+scp dist/ZeroRF-NFC_*.deb cpzero:/tmp/
+ssh cpzero 'sudo apt-get install -y /tmp/ZeroRF-NFC_*.deb'   # queda como "RF / NFC" en el lanzador
+```
+
+El `.desktop` la abre con `sudo -n` (el NFC necesita root para SPI/GPIO/overlay); el paquete
+instala un `sudoers.d` que lo permite al grupo `sudo` sin contraseña.
 
 ## NFC — qué hace ya
 
