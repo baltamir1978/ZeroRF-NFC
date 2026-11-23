@@ -1,6 +1,7 @@
 // zeronfc — herramienta de línea de comandos para el NFC del Cardputer Zero (ST25R3916).
 // Fase 1 en curso. De momento: encender el Cap y validar el arranque del chip (init).
 #include <array>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -462,9 +463,10 @@ static int cmd_save(bool vdd5, const std::string& path, int maxpages) {
     if (!f) { fprintf(stderr, "ERROR: no pude crear %s\n", path.c_str()); cap_power(false); return 2; }
     char uidhex[32] = {0};
     for (int j = 0; j < p.uid_len; ++j) sprintf(uidhex + j * 2, "%02X", p.uid[j]);
-    f << "# ZeroNFC Type2 dump  UID=" << uidhex
-      << "  ATQA=" << std::hex << (int)p.atqa[1] << (int)p.atqa[0]
-      << "  SAK=" << (int)p.sak << std::dec << "\n";
+    char hdr[96];
+    sprintf(hdr, "# ZeroNFC Type2 dump UID=%s ATQA=%02X%02X SAK=%02X\n",
+            uidhex, p.atqa[1], p.atqa[0], p.sak);
+    f << hdr;
     uint8_t first[16] = {0};
     int printed = 0;
     for (int page = 0; page < maxpages; page += 4) {
@@ -527,6 +529,62 @@ static int cmd_load(bool vdd5, const std::string& path, bool force) {
     nfc.close();
     cap_power(false);
     return fail ? 1 : 0;
+}
+
+// Emula una tarjeta NFC-A Type 2 a partir de un volcado (UID + páginas).
+static int cmd_emulate(bool vdd5, const std::string& path, int secs) {
+    std::ifstream f(path);
+    if (!f) { fprintf(stderr, "ERROR: no pude abrir %s\n", path.c_str()); return 2; }
+    std::string uidhex; unsigned atqa = 0x0044, sak = 0x00;
+    std::map<int, std::array<uint8_t, 4>> pg;
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        if (line[0] == '#') {
+            char b[64];
+            auto pu = line.find("UID=");  if (pu != std::string::npos && sscanf(line.c_str() + pu, "UID=%40s", b) == 1) uidhex = b;
+            auto pa = line.find("ATQA="); if (pa != std::string::npos) sscanf(line.c_str() + pa, "ATQA=%x", &atqa);
+            auto ps = line.find("SAK=");  if (ps != std::string::npos) sscanf(line.c_str() + ps, "SAK=%x", &sak);
+            continue;
+        }
+        int p2; char hex[16] = {0};
+        if (sscanf(line.c_str(), "%d %8s", &p2, hex) != 2) continue;
+        unsigned b0, b1, b2, b3;
+        if (sscanf(hex, "%2x%2x%2x%2x", &b0, &b1, &b2, &b3) != 4) continue;
+        pg[p2] = {(uint8_t)b0, (uint8_t)b1, (uint8_t)b2, (uint8_t)b3};
+    }
+    f.close();
+    if (uidhex.empty()) { fprintf(stderr, "ERROR: el volcado no tiene UID en la cabecera\n"); return 1; }
+    st25::PiccA p{};
+    p.uid_len = (uint8_t)(uidhex.size() / 2);
+    for (int i = 0; i < p.uid_len && i < 10; ++i) { unsigned v; sscanf(uidhex.c_str() + i*2, "%2x", &v); p.uid[i] = (uint8_t)v; }
+    p.atqa[0] = atqa & 0xFF; p.atqa[1] = (atqa >> 8) & 0xFF; p.sak = (uint8_t)sak;
+    int maxpg = 0; for (auto& e : pg) maxpg = std::max(maxpg, e.first);
+    int nbytes = (maxpg + 1) * 4;
+    std::vector<uint8_t> mem(nbytes, 0);
+    for (auto& e : pg) for (int i = 0; i < 4; ++i) mem[e.first * 4 + i] = e.second[i];
+
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); cap_power(false); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); cap_power(false); return 2; }
+    printf("Emulando tarjeta NFC-A: UID=%s ATQA=%02X%02X SAK=%02X, %d páginas, %ds.\n",
+           uidhex.c_str(), p.atqa[1], p.atqa[0], p.sak, nbytes / 4, secs);
+    printf("Acerca un lector (móvil con NFC) al Cap...\n"); fflush(stdout);
+    st25::St25r3916::EmuStats stats; std::string err;
+    if (!nfc.runEmulationA(p, mem.data(), nbytes, secs, stats, err)) {
+        printf("No pude emular: %s\n", err.c_str()); nfc.close(); cap_power(false); return 1;
+    }
+    printf("Fin. Campo externo detectado: %d veces, seleccionados: %d, lecturas servidas: %d, otros: %d\n",
+           stats.fields, stats.selections, stats.reads, stats.other);
+    if (stats.fields == 0)
+        printf("(0 campo externo: NINGÚN lector acercó su campo. El NFC del lector está apagado o no llegó a la antena.)\n");
+    else if (stats.selections == 0)
+        printf("(Hubo campo pero no nos seleccionó: el lector ve el campo pero algo falla en el anticollision emulado.)\n");
+    nfc.close();
+    cap_power(false);
+    return 0;
 }
 
 // Escribe una página Type 2 (4 bytes) y la relee para verificar.
@@ -608,6 +666,10 @@ int main(int argc, char** argv) {
     if (sub == "save") {
         if (pos.empty()) { fprintf(stderr, "uso: %s save <fichero>\n", argv[0]); return 64; }
         return cmd_save(vdd5, pos[0], 232);
+    }
+    if (sub == "emulate") {
+        if (pos.empty()) { fprintf(stderr, "uso: %s emulate <volcado> [--secs N]\n", argv[0]); return 64; }
+        return cmd_emulate(vdd5, pos[0], secs);
     }
     if (sub == "load") {
         if (pos.empty()) { fprintf(stderr, "uso: %s load <fichero> [--force]\n", argv[0]); return 64; }

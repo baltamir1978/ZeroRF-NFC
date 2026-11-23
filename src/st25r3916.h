@@ -37,10 +37,12 @@ enum : uint8_t {
     CMD_SET_DEFAULT = 0xC1, CMD_STOP_ALL = 0xC2,
     CMD_TRANSMIT_WITH_CRC = 0xC4, CMD_TRANSMIT_WITHOUT_CRC = 0xC5,
     CMD_TRANSMIT_REQA = 0xC6, CMD_TRANSMIT_WUPA = 0xC7,
-    CMD_NFC_INITIAL_FIELD_ON = 0xC8, CMD_GO_TO_SLEEP = 0xCE,
+    CMD_NFC_INITIAL_FIELD_ON = 0xC8, CMD_GO_TO_SENSE = 0xCD, CMD_GO_TO_SLEEP = 0xCE,
+    CMD_UNMASK_RECEIVE_DATA = 0xD1,
     CMD_MEASURE_AMPLITUDE = 0xD3, CMD_RESET_RX_GAIN = 0xD5, CMD_ADJUST_REGULATORS = 0xD6,
     CMD_CLEAR_FIFO = 0xDB, CMD_SPACEB_ACCESS = 0xFB, CMD_TEST_ACCESS = 0xFC,
 };
+enum : uint8_t { OP_LOAD_PT_MEMORY_A = 0xA0 };  // cargar config de passive target NFC-A
 // --- Bits ---
 enum : uint8_t {
     OP_EN = 0x80, OP_RX_EN = 0x40, OP_TX_EN = 0x08, OP_WU = 0x04,
@@ -59,6 +61,8 @@ constexpr uint32_t IRQ_COL  = 0x04u << 24;  // colisión
 constexpr uint32_t IRQ_NRE  = 0x40u << 16;  // no-response timer expiró
 constexpr uint32_t IRQ_CAT  = 0x02u << 16;  // guard time de field-on cumplido
 constexpr uint32_t IRQ_CAC  = 0x04u << 16;  // colisión en evitación RF (campo externo)
+constexpr uint32_t IRQ_EOF  = 0x08u << 16;  // caída del campo externo (en emulación)
+constexpr uint32_t IRQ_WU_A = 0x01u;        // (reg pasivo target) seleccionados como target
 constexpr uint32_t IRQ_ERR_MASK = 0x0000FF00u;  // cualquier error (crc/par/err1/err2)
 
 struct InitStatus {
@@ -138,6 +142,13 @@ public:
     void configureNfcF();                        // reconfigura el chip para NFC-F (212kbps) y enciende campo
     bool nfcfPoll(uint8_t* res, int& len);       // SENSF_REQ; true si una tarjeta FeliCa responde
 
+    // --- Emulación NFC-A (modo target) ---
+    struct EmuStats { int selections = 0; int reads = 0; int other = 0; int fields = 0; };
+    void writePtMemoryA(const uint8_t* d, int n);   // carga config de passive target (UID/ATQA/SAK)
+    // Emula una tarjeta NFC-A Type 2: UID/ATQA/SAK de 'p', memoria de páginas en mem (nbytes).
+    // Corre 'secs' segundos sirviendo a un lector. El chip resuelve el anticollision/SELECT solo.
+    bool runEmulationA(const PiccA& p, const uint8_t* mem, int nbytes, int secs, EmuStats& stats, std::string& err);
+
     bool vdd5() const { return vdd5_; }
 private:
     int fd_ = -1;
@@ -145,6 +156,7 @@ private:
     uint32_t speed_ = 1'000'000;
     void xfer(uint8_t* buf, size_t n);
     bool enableOsc(std::string& err);
+    bool baseBringUp(InitStatus& st);
     bool anticollisionLevel(uint8_t sel_cmd, uint8_t* uid_out, uint8_t& sak_out, bool& cascade);
 };
 

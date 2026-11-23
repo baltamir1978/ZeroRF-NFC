@@ -119,9 +119,9 @@ bool St25r3916::enableOsc(std::string& err) {
     return false;
 }
 
-InitStatus St25r3916::init() {
-    InitStatus st;
-
+// Arranque común del chip (identidad, set default, IO config, oscilador, reguladores).
+// NO configura modo NFC ni enciende campo. Lo usan el lector (init) y el emulador.
+bool St25r3916::baseBringUp(InitStatus& st) {
     // 0) Identidad con reintentos
     bool detected = false;
     for (int i = 0; i < 5; ++i) {
@@ -131,7 +131,7 @@ InitStatus St25r3916::init() {
         if (st.ic_type == 0x05 && st.ic_rev != 0) { detected = true; break; }
         sleep_ms(10);
     }
-    if (!detected) { st.error = "ST25R3916 no detectado"; return st; }
+    if (!detected) { st.error = "ST25R3916 no detectado"; return false; }
 
     // 1) Reset defensivo
     cmd(CMD_STOP_ALL);
@@ -166,17 +166,21 @@ InitStatus St25r3916::init() {
     // 4) Reguladores: enmascarar interrupciones salvo error, arrancar oscilador, ajustar
     writeReg32(REG_MASK_MAIN_IRQ, 0xFFFF00FFu);
     clearIrq();
-    if (!enableOsc(st.error)) return st;
+    if (!enableOsc(st.error)) return false;
     writeReg32(REG_MASK_MAIN_IRQ, 0x00000000u);
     cmd(CMD_ADJUST_REGULATORS);
     sleep_ms(5);
 
     st.osc_ok = (readReg(REG_AUX_DISPLAY) & AUX_OSC_OK) != 0;
     st.regulator_raw = readRegB(REGB_REGULATOR_DISPLAY);
-    {
-        int rv = (st.regulator_raw >> 4) & 0x0F;
-        st.regulator_volts = vdd5_ ? (3.6f + 0.1f * rv) : (2.4f + 0.1f * rv);
-    }
+    int rv = (st.regulator_raw >> 4) & 0x0F;
+    st.regulator_volts = vdd5_ ? (3.6f + 0.1f * rv) : (2.4f + 0.1f * rv);
+    return true;
+}
+
+InitStatus St25r3916::init() {
+    InitStatus st;
+    if (!baseBringUp(st)) return st;
 
     // 5) Modo lector NFC-A (ISO14443A) + campo ON
     cmd(CMD_STOP_ALL);
@@ -529,6 +533,91 @@ bool St25r3916::nfcfPoll(uint8_t* res, int& len) {
     if (n <= 0) return false;
     len = n;
     for (int i = 0; i < n && i < 32; ++i) res[i] = buf[i];
+    return true;
+}
+
+void St25r3916::writePtMemoryA(const uint8_t* d, int n) {
+    std::vector<uint8_t> b;
+    b.reserve(1 + n);
+    b.push_back(OP_LOAD_PT_MEMORY_A);
+    b.insert(b.end(), d, d + n);
+    xfer(b.data(), b.size());
+}
+
+bool St25r3916::runEmulationA(const PiccA& p, const uint8_t* mem, int nbytes, int secs,
+                              EmuStats& stats, std::string& err) {
+    if (p.uid_len != 4 && p.uid_len != 7) { err = "sólo UID de 4 o 7 bytes"; return false; }
+    InitStatus st;
+    if (!baseBringUp(st)) { err = st.error; return false; }
+
+    // configure_emulation_a: target, NFC-A, detección de bitrate
+    cmd(CMD_STOP_ALL);
+    writeReg(REG_MODE_DEF, 0xC8);
+    writeReg(REG_NFCIP1_PT_DEF, 0x5C);
+    writeReg(0x19, 0x02);              // mask passive target interrupt (I_wu_ax)
+    writeReg(REG_TIMER_EMV, 0x08);     // mrt_step 512
+
+    // PT memory A: UID(10) + ATQA(2) + SAK x3
+    uint8_t wbuf[15] = {0};
+    for (int i = 0; i < p.uid_len; ++i) wbuf[i] = p.uid[i];
+    wbuf[10] = p.atqa[0];              // ATQA LSB
+    wbuf[11] = p.atqa[1];              // ATQA MSB
+    wbuf[12] = (p.uid_len == 4) ? (p.sak & ~0x04) : (p.sak | 0x04);  // SAK lv1 (cascada si 7B)
+    wbuf[13] = (p.sak & ~0x04);
+    wbuf[14] = (p.sak & ~0x04);
+    modifyReg(REG_AUX_DEF, (p.uid_len == 7) ? 0x10 : 0x00, 0x30);    // uid_7 / uid_4
+    writePtMemoryA(wbuf, 15);
+
+    // start_emulation
+    modifyReg(REG_NFCIP1_PT_DEF, 0x0C, 0x01);  // auto-respuesta sólo NFC-A
+    modifyReg(REG_TIMER_EMV, 0x00, 0xE0);      // sin trigger GPT
+    modifyReg(REG_TIMER_EMV, 0x08, 0x00);      // pasos 512/fc
+    writeReg(0x0F, 0x03);                      // MRT ~100us
+    modifyReg(REG_ISO14443A, 0x00, 0x80 | 0x40 | 0x20);  // paridad on, NFCIP-1 off
+    writeReg(REG_ANT_TUNE_1, 0x00);
+    writeReg(REG_ANT_TUNE_2, 0xFF);
+    writeRegB(REGB_OVERSHOOT_1, 0x00); writeRegB(REGB_OVERSHOOT_2, 0x00);
+    writeRegB(REGB_UNDERSHOOT_1, 0x00); writeRegB(REGB_UNDERSHOOT_2, 0x00);
+    writeReg32(REG_MASK_MAIN_IRQ, 0x00000000u);
+    cmd(CMD_UNMASK_RECEIVE_DATA);
+    clearIrq();
+    cmd(CMD_GO_TO_SENSE);
+
+    int npages = nbytes / 4;
+    auto t0 = std::chrono::steady_clock::now();
+    auto deadline = t0 + std::chrono::seconds(secs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        uint32_t irq = readIrq();
+        uint8_t pta = irq & 0xFF;                 // reg interrupción passive target (0x1D)
+        if (pta & (IRQ_WU_A | 0x02)) ++stats.selections;  // seleccionados como target
+        if (irq & (0x10u << 16)) ++stats.fields;  // I_eon: detectado campo externo (lector cerca)
+        if (irq & IRQ_EOF) cmd(CMD_GO_TO_SENSE);   // I_eof: campo caído -> volver a sense
+        if (irq & IRQ_RXE) {                      // llegó un comando estando activos
+            uint8_t s1 = readReg(REG_FIFO_STATUS_1);
+            int n = s1;
+            if (n > 0) {
+                auto rx = fifoRead(n);
+                uint8_t c0 = rx[0];
+                if (c0 == 0x30 && rx.size() >= 2 && npages > 0) {        // READ pág
+                    uint8_t page = rx[1];
+                    uint8_t resp[16];
+                    for (int i = 0; i < 16; ++i) resp[i] = mem[((page * 4 + i) % nbytes)];
+                    cmd(CMD_CLEAR_FIFO);
+                    fifoLoad(resp, 16);
+                    writeReg16(REG_NUM_TX_BYTES_1, uint16_t((16 & 0x1FF) << 3));
+                    cmd(CMD_TRANSMIT_WITH_CRC);
+                    ++stats.reads;
+                } else if (c0 == 0x50) {            // HALT
+                    cmd(CMD_GO_TO_SLEEP);
+                } else {
+                    ++stats.other;
+                }
+            }
+            cmd(CMD_UNMASK_RECEIVE_DATA);
+        }
+        usleep(200);
+    }
+    cmd(CMD_STOP_ALL);
     return true;
 }
 
