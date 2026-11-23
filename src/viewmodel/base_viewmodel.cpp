@@ -111,6 +111,12 @@ void BaseViewModel::clear_page_handlers() {
 }
 
 bool BaseViewModel::handle_key(uint32_t key) {
+    // En una herramienta las teclas las gestiona antes su pantalla, si se ha registrado: así,
+    // mientras se escribe un nombre, la T es una letra y no el cambio de tema.
+    if (current_page() != model::AppPage::Home && page_key_handler_ && page_key_handler_(key)) {
+        return true;
+    }
+
     // El tema se cambia desde cualquier pantalla.
     if (key == 't' || key == 'T') {
         toggle_dark_mode();
@@ -118,8 +124,7 @@ bool BaseViewModel::handle_key(uint32_t key) {
     }
 
     if (current_page() != model::AppPage::Home) {
-        // En una herramienta las teclas las gestiona su pantalla, si se ha registrado.
-        return page_key_handler_ ? page_key_handler_(key) : false;
+        return false;
     }
 
     switch (key) {

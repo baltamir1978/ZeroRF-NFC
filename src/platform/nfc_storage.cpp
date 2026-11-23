@@ -77,4 +77,16 @@ bool delete_card(const std::string& name) {
     return fs::remove(card_path(name), ec);
 }
 
+bool rename_card(const std::string& from, const std::string& to) {
+    std::error_code ec;
+    if (from == to) {
+        return true;
+    }
+    if (to.empty() || fs::exists(card_path(to), ec)) {
+        return false;
+    }
+    fs::rename(card_path(from), card_path(to), ec);
+    return !ec;
+}
+
 } // namespace platform

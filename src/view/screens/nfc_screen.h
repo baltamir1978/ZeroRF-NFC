@@ -30,7 +30,7 @@ protected:
     void build_content(lv_obj_t* content) override;
 
 private:
-    enum class Mode { List, Scanning, Detail, Emulating };
+    enum class Mode { List, Scanning, Detail, Emulating, Rename };
 
     bool handle_key(uint32_t key);
     bool handle_back();
@@ -44,6 +44,8 @@ private:
     void open_selected();
     void start_emulate();
     void delete_current();
+    void start_rename();
+    void finish_rename();
     void on_found();
 
     static void poll_timer_cb(lv_timer_t* timer);
@@ -56,6 +58,7 @@ private:
     std::string status_line_;
     nfc::Card current_card_;
     std::string current_name_;
+    std::string rename_buffer_;
 
     std::array<lv_obj_t*, kVisibleRows> rows_{};
     std::array<lv_obj_t*, kVisibleRows> row_labels_{};

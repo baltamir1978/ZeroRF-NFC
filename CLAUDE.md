@@ -106,6 +106,12 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.2.1 (23-nov-2026) — renombrar tarjetas guardadas** (R en el detalle: se escribe el nombre
+  desde cero, ENTER guarda, ESC cancela; `src/model/name_edit.*` con pruebas). Arreglado de paso
+  que **en el aparato no llegaban casi ninguna letra** (la D de borrar tampoco): se trajo
+  `map_evdev_char` de ZeroGPS 0.3.2. La T del tema ahora sólo actúa si la pantalla no usa la
+  tecla, para poder escribirla. Probado en el simulador; sin confirmar en el aparato.
+
 - **0.2.0 (23-nov-2026) — NFC con el driver real; escanear y guardar confirmados por Bruno en
   el aparato** (la Ultralight EV1, 20 páginas, y la NTAG215, 135 páginas con su NDEF URI, en
   `~/.local/share/zerorfnfc/nfc/`). Emular sigue sin validar (falta un lector que funcione).

@@ -5,6 +5,7 @@
 #include "nfc_screen.h"
 
 #include "asset_manager.h"
+#include "name_edit.h"
 #include "nfc_file.h"
 #include "nfc_ndef.h"
 #include "nfc_storage.h"
@@ -17,6 +18,8 @@ namespace screen {
 namespace {
 
 using State = platform::NfcSt25r3916::State;
+
+static_assert(LV_KEY_BACKSPACE == text::kBackspace, "el modelo de texto supone Backspace = 8");
 
 constexpr int32_t kMargin = 8;
 constexpr int32_t kRowHeight = 24;
@@ -172,6 +175,7 @@ void NfcScreen::open_selected() {
     }
     current_card_ = std::move(card);
     current_name_ = name;
+    status_line_.clear();
     mode_ = Mode::Detail;
 }
 
@@ -194,6 +198,39 @@ void NfcScreen::delete_current() {
     reload_cards();
     mode_ = Mode::List;
     status_line_ = "Deleted " + deleted;
+}
+
+void NfcScreen::start_rename() {
+    if (current_name_.empty()) {
+        return;
+    }
+    // Se empieza en blanco: con el nombre automático («card-04DEAD62D42A81») habría que borrar
+    // 19 letras antes de escribir. ENTER sin escribir nada deja el nombre como estaba.
+    rename_buffer_.clear();
+    status_line_.clear();
+    mode_ = Mode::Rename;
+}
+
+void NfcScreen::finish_rename() {
+    mode_ = Mode::Detail;
+    const std::string name = text::clean_file_name(rename_buffer_);
+    if (name.empty() || name == current_name_) {
+        return;
+    }
+    if (!platform::rename_card(current_name_, name)) {
+        status_line_ = "Name already used";
+        return;
+    }
+    current_name_ = name;
+    reload_cards();
+    for (std::size_t i = 0; i < names_.size(); ++i) {
+        if (names_[i] == name) {
+            selection_ = static_cast<int>(i) + 1;
+            break;
+        }
+    }
+    ensure_visible();
+    status_line_ = "Renamed";
 }
 
 void NfcScreen::on_found() {
@@ -230,8 +267,24 @@ bool NfcScreen::handle_key(uint32_t key) {
         return false;
     }
 
+    if (mode_ == Mode::Rename) {
+        if (key == LV_KEY_ENTER || key == '\r') {
+            finish_rename();
+        } else if (!text::edit_name(rename_buffer_, key)) {
+            return true; // en modo texto no se escapan atajos (salvo ESC, que va por «atrás»)
+        }
+        refresh();
+        return true;
+    }
+
     if (mode_ == Mode::Detail) {
+        status_line_.clear();
         switch (key) {
+            case 'r':
+            case 'R':
+                start_rename();
+                refresh();
+                return true;
             case LV_KEY_ENTER:
             case '\r':
             case ' ':
@@ -308,6 +361,10 @@ bool NfcScreen::handle_back() {
         case Mode::Emulating:
             reader_.stop();
             mode_ = Mode::Detail;
+            refresh();
+            return true;
+        case Mode::Rename:
+            mode_ = Mode::Detail; // cancelar sin cambiar el nombre
             refresh();
             return true;
         case Mode::Detail:
@@ -397,7 +454,26 @@ void NfcScreen::refresh() {
         lv_obj_set_style_text_color(line1_, colors.text, 0);
         lv_obj_set_style_text_color(line2_, colors.text, 0);
         lv_obj_set_style_text_color(line3_, colors.text, 0);
-        lv_label_set_text(hint_, "ENTER  emulate      D  delete");
+        // En el detalle no hay sitio para otra línea: el aviso («Saved…», «Renamed») ocupa la
+        // de ayuda hasta la siguiente tecla.
+        lv_label_set_text(hint_, status_line_.empty() ? "ENTER emulate    R rename    D delete"
+                                                      : status_line_.c_str());
+        lv_obj_set_style_text_color(hint_, status_line_.empty() ? colors.text_disabled : colors.success, 0);
+        return;
+    } else if (mode_ == Mode::Rename) {
+        show(line1_, true);
+        show(line2_, true);
+        show(line3_, false);
+        lv_obj_set_style_text_align(headline_, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_style_text_align(line1_, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_style_text_align(line2_, LV_TEXT_ALIGN_LEFT, 0);
+        lv_label_set_text(headline_, (rename_buffer_ + "_").c_str());
+        lv_label_set_text(line1_, "Type a new name");
+        lv_label_set_text(line2_, ("Now: " + current_name_).c_str());
+        lv_obj_set_style_text_color(headline_, colors.primary, 0);
+        lv_obj_set_style_text_color(line1_, colors.text, 0);
+        lv_obj_set_style_text_color(line2_, colors.text_disabled, 0);
+        lv_label_set_text(hint_, "ENTER save     DEL erase     ESC cancel");
     } else { // Scanning / Emulating
         show(line1_, true);
         show(line2_, false);

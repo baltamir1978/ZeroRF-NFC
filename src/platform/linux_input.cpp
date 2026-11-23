@@ -215,7 +215,37 @@ void key_event_cb(lv_event_t* event) {
 }
 
 #if !USE_DESKTOP
+// Letras y números tal cual (en minúscula: las pantallas aceptan las dos). La plantilla sólo
+// traducía las pocas teclas que usaba ZeroTVBGone, y en el aparato no llegaban M, O, R, D ni el
+// zoom aunque en el simulador (SDL) sí funcionaran.
+uint32_t map_evdev_char(uint16_t code) {
+    static constexpr struct {
+        uint16_t code;
+        char ch;
+    } kChars[] = {
+        {KEY_A, 'a'}, {KEY_B, 'b'}, {KEY_C, 'c'}, {KEY_D, 'd'}, {KEY_E, 'e'}, {KEY_F, 'f'},
+        {KEY_G, 'g'}, {KEY_H, 'h'}, {KEY_I, 'i'}, {KEY_J, 'j'}, {KEY_K, 'k'}, {KEY_L, 'l'},
+        {KEY_M, 'm'}, {KEY_N, 'n'}, {KEY_O, 'o'}, {KEY_P, 'p'}, {KEY_Q, 'q'}, {KEY_R, 'r'},
+        {KEY_S, 's'}, {KEY_T, 't'}, {KEY_U, 'u'}, {KEY_V, 'v'}, {KEY_W, 'w'}, {KEY_X, 'x'},
+        {KEY_Y, 'y'}, {KEY_Z, 'z'}, {KEY_0, '0'}, {KEY_1, '1'}, {KEY_2, '2'}, {KEY_3, '3'},
+        {KEY_4, '4'}, {KEY_5, '5'}, {KEY_6, '6'}, {KEY_7, '7'}, {KEY_8, '8'}, {KEY_9, '9'},
+        {KEY_MINUS, '-'}, {KEY_EQUAL, '='}, {KEY_COMMA, ','}, {KEY_DOT, '.'},
+        // El teclado del Cardputer (tca8418) no tiene KEY_MINUS/KEY_EQUAL: su - y su + son
+        // los del teclado numérico.
+        {KEY_KPMINUS, '-'}, {KEY_KPPLUS, '+'},
+    };
+    for (const auto& entry : kChars) {
+        if (entry.code == code) {
+            return static_cast<uint32_t>(entry.ch);
+        }
+    }
+    return 0;
+}
+
 uint32_t map_evdev_key(uint16_t code) {
+    if (const uint32_t ch = map_evdev_char(code)) {
+        return ch;
+    }
     switch (code) {
         case KEY_ESC:
             return LV_KEY_ESC;
@@ -242,29 +272,8 @@ uint32_t map_evdev_key(uint16_t code) {
             return LV_KEY_END;
         case KEY_SPACE:
             return ' ';
-        // Las flechas del Cardputer Zero están en F, Z, X y C (con Fn). Se pasan las
-        // letras tal cual y tvbgone::action_for_key las trata como flechas, así valen
-        // también sin Fn.
-        case KEY_F:
-            return 'f';
-        case KEY_X:
-            return 'x';
-        case KEY_T:
-            return 't';
-        case KEY_Z:
-            return 'z';
-        case KEY_C:
-            return 'c';
-        case KEY_4:
-            return '4';
-        case KEY_5:
-            return '5';
-        case KEY_6:
-            return '6';
-        case KEY_7:
-            return '7';
-        case KEY_8:
-            return '8';
+        // Las flechas del Cardputer Zero están en F, Z, X y C (con Fn): llegan como letras
+        // (map_evdev_char) y el viewmodel las trata como flechas, así valen también sin Fn.
         case KEY_SYSRQ:
             return kKeyPrintScreen;
         case KEY_HELP:
