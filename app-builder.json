@@ -1,0 +1,44 @@
+{
+  "app_name": "ZeroRF-NFC",
+  "package_name": "zerorfnfc",
+  "bin_name": "zerorfnfc",
+  "version": "0.1.0",
+  "description": "Sub-GHz and NFC tools for the CardputerZero CC1101+NFC cap",
+
+  "store": {
+    "summary": "Record & replay 433 MHz remotes and read, write & emulate NFC cards",
+    "description": "Two tools for the CC1101+NFC cap. Sub-GHz: record a 433 MHz remote (like a garage opener), save it and replay it, with the CC1101 radio. NFC: read, write and emulate 13.56 MHz cards, with the ST25R3916. Pick a tool with the arrows and ENTER; ESC goes back, hold ESC to exit. Note: fixed-code remotes can be replayed; rolling-code (KeeLoq) remotes cannot, by design.",
+    "categories": ["Hardware & IoT"],
+    "screenshots": [
+      "screenshot/home.png"
+    ],
+    "icon": "store/icon.png",
+    "license": "MIT",
+    "source_repo": "https://github.com/baltamir1978/ZeroRF-NFC",
+    "author": { "github": "baltamir1978", "display_name": "baltamir1978" },
+    "locales": {
+      "es": {
+        "title": "ZeroRF-NFC",
+        "summary": "Graba y reemite mandos de 433 MHz y lee, escribe y emula tarjetas NFC"
+      },
+      "zh-CN": {
+        "title": "ZeroRF-NFC",
+        "summary": "录制并重放 433 MHz 遥控器，读取、写入和模拟 NFC 卡"
+      },
+      "ja": {
+        "title": "ZeroRF-NFC",
+        "summary": "433 MHzリモコンの録音・再送信とNFCカードの読み書き・エミュレート"
+      }
+    },
+    "share_code": "ZRFN",
+    "permissions": {
+      "camera": false,
+      "microphone": false,
+      "imu": false,
+      "network": false,
+      "additional_hardware": true,
+      "background_service": false,
+      "external_display": false
+    }
+  }
+}
