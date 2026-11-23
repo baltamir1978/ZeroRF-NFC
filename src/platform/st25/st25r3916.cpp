@@ -640,6 +640,10 @@ bool St25r3916::runEmulationA(const PiccA& p, const uint8_t* mem, int nbytes, in
     writeReg(REG_ANT_TUNE_2, 0xFF);
     writeRegB(REGB_OVERSHOOT_1, 0x00); writeRegB(REGB_OVERSHOOT_2, 0x00);
     writeRegB(REGB_UNDERSHOOT_1, 0x00); writeRegB(REGB_UNDERSHOOT_2, 0x00);
+    // Umbral del detector de campo externo bajo: con el 0x13 de lectura, en modo tarjeta el chip
+    // ni veía el campo de un móvil (diagnóstico 23-nov-2026: con 0x02 salta I_eon de sobra).
+    writeReg(REG_EFD_ACT_THR, 0x02);
+    writeReg(REG_EFD_DEACT_THR, 0x01);
     writeReg32(REG_MASK_MAIN_IRQ, 0x00000000u);
     cmd(CMD_UNMASK_RECEIVE_DATA);
     clearIrq();

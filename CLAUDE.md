@@ -106,6 +106,21 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **Emulación NFC-A — diagnosticada en el aparato (23-nov-2026, con el móvil de Bruno, que ya lee
+  tarjetas).** Con `Tools/zeronfc/emudiag.cpp` (dev-tool: pone el modo target y vuelca registros):
+  1. **Bug encontrado y corregido:** el umbral del detector de campo externo (`REG_EFD_ACT_THR`)
+     se quedaba en `0x13` (valor de lectura) y en modo tarjeta el chip **ni veía el campo** del
+     móvil → por eso «no hacía nada». Bajado a `0x02` en `runEmulationA`: ahora `efd_o=1` e
+     `I_eon` saltan de sobra.
+  2. **Lo que sigue sin funcionar:** el chip ve el campo pero **nunca reconoce el REQA** del móvil
+     (ni `I_nfct` = velocidad reconocida, ni `I_wu_a` = seleccionado), ni leyendo activamente. La
+     causa: el **receptor está configurado para modo lector** (demodular la subportadora de una
+     tarjeta), no para modo tarjeta (recibir la modulación ASK directa del lector a 106 kbps).
+     Falta portar la config de recepción en modo escucha (ST rfal `rfalListenStart` o el Flipper,
+     GPLv3 → decidir licencia). Es trabajo de driver, no un parche. El móvil es mal instrumento:
+     deja de sondear al bloquearse; para probar hay que tenerlo despierto y, mejor, leyendo.
+     Nota: el modo directo `0x88` daba `efd=no`; el bueno para escuchar es `0xC8` (detección de
+     velocidad). La emulación en la UI queda, pues, **sin funcionar todavía**.
 - **0.2.1 (23-nov-2026) — renombrar tarjetas guardadas** (R en el detalle: se escribe el nombre
   desde cero, ENTER guarda, ESC cancela; `src/model/name_edit.*` con pruebas). Arreglado de paso
   que **en el aparato no llegaban casi ninguna letra** (la D de borrar tampoco): se trajo
