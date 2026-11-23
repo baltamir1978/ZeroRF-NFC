@@ -129,6 +129,10 @@ public:
     bool type2Read(uint8_t page, uint8_t out[16]);
     // WRITE (0xA2): escribe 4 bytes en 'page'. true si la tarjeta responde ACK.
     bool type2Write(uint8_t page, const uint8_t data[4]);
+    // GET_VERSION (0x60): 8 bytes de versión (NTAG / Ultralight EV1). La tarjeta debe estar activada.
+    bool type2GetVersion(uint8_t* ver, int& len);
+    // RATS (0xE0 0x80): pide el ATS a una tarjeta ISO14443-4 (DESFire, etc.). Debe estar activada.
+    bool rats(uint8_t* ats, int& len);
 
     // --- NFC-B (ISO14443-B) ---
     void configureNfcB();                        // reconfigura el chip para NFC-B y enciende campo
@@ -137,6 +141,11 @@ public:
     // --- NFC-V (ISO15693) ---
     void configureNfcV();                        // reconfigura el chip para NFC-V (modo stream) y enciende campo
     bool nfcvInventory(uint8_t* raw, int& len);  // Inventory; true si responde algo (bytes crudos del stream)
+
+    // --- HID iCLASS / Picopass (sobre capa física ISO15693) ---
+    // ACTALL + IDENTIFY; devuelve el CSN de anticolisión (raw) si una iCLASS responde.
+    // Requiere haber llamado antes a configureNfcV(). true si hay respuesta.
+    bool iclassIdentify(uint8_t* raw, int& len);
 
     // --- NFC-F (FeliCa) ---
     void configureNfcF();                        // reconfigura el chip para NFC-F (212kbps) y enciende campo

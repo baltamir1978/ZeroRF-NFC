@@ -306,6 +306,187 @@ static int cmd_sense(bool vdd5, int secs) {
     return 0;
 }
 
+// Fabricante por el primer byte del UID (ISO/IEC 7816-6).
+static const char* manufacturer(uint8_t b) {
+    switch (b) {
+        case 0x04: return "NXP";
+        case 0x02: return "STMicroelectronics";
+        case 0x05: return "Infineon";
+        case 0x07: return "Texas Instruments";
+        case 0x08: return "Fujitsu";
+        case 0x16: return "EM Microelectronic";
+        case 0x21: return "EM Microelectronic";
+        case 0x28: return "Kovio";
+        case 0x2B: return "Maxim";
+        case 0x47: return "Gemalto/Thales";
+        default: return "desconocido";
+    }
+}
+
+// Clasifica una tarjeta NFC-A por ATQA + SAK (ISO14443-3 + NXP AN10833).
+static const char* classify_a(uint8_t sak, uint16_t atqa) {
+    uint8_t s = sak & 0x7F;
+    if (s & 0x20) return "ISO14443-4 (DESFire / MIFARE Plus SL3 / JCOP / tarjeta con APDU)";
+    switch (s) {
+        case 0x00: return "NFC Forum Type 2 (MIFARE Ultralight / NTAG)";
+        case 0x08: return (atqa == 0x0004) ? "MIFARE Classic 1K" : "MIFARE Classic 1K / Plus 2K SL1";
+        case 0x09: return "MIFARE Mini (0.3K)";
+        case 0x18: return "MIFARE Classic 4K / Plus 4K SL1";
+        case 0x10: return "MIFARE Plus 2K (SL2)";
+        case 0x11: return "MIFARE Plus 4K (SL2)";
+        case 0x28: return "SmartMX con MIFARE Classic 1K";
+        case 0x38: return "SmartMX con MIFARE Classic 4K";
+        case 0x01: return "NXP TNP3xxx";
+        default: return "NFC-A (SAK no reconocido)";
+    }
+}
+
+static int cmd_identify(bool vdd5) {
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); cap_power(false); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); cap_power(false); return 2; }
+    st25::InitStatus s = nfc.init();
+    if (!s.ok) { printf("init falló: %s\n", s.error.c_str()); cap_power(false); return 1; }
+    printf("Deja la tarjeta pegada al Cap. Identificando...\n"); fflush(stdout);
+
+    // --- NFC-A ---
+    st25::PiccA p;
+    bool a = false;
+    for (int i = 0; i < 15 && !a; ++i) a = select_card(nfc, p, 1);
+    if (a) {
+        char uidhex[32] = {0};
+        for (int j = 0; j < p.uid_len; ++j) sprintf(uidhex + j * 2, "%02X", p.uid[j]);
+        uint16_t atqa = (p.atqa[1] << 8) | p.atqa[0];
+        printf("\nTecnología : NFC-A (ISO14443-A)\n");
+        printf("UID        : %s (%d bytes, fabricante: %s)\n", uidhex, p.uid_len, manufacturer(p.uid[0]));
+        printf("ATQA/SAK   : %04X / %02X\n", atqa, p.sak);
+        printf("Tipo       : %s\n", classify_a(p.sak, atqa));
+        if ((p.sak & 0x20)) {
+            uint8_t ats[32]; int al = 0;
+            if (nfc.rats(ats, al)) {
+                printf("ATS        :");
+                for (int i = 0; i < al; ++i) printf(" %02X", ats[i]);
+                printf("\n");
+            }
+        } else if ((p.sak & 0x7F) == 0x00) {
+            uint8_t v[16]; int vl = 0;
+            if (nfc.type2GetVersion(v, vl) && vl >= 8 && v[1] == 0x04) {
+                const char* prod = "NXP Type 2";
+                if (v[2] == 0x03) prod = "MIFARE Ultralight EV1";
+                else if (v[2] == 0x04) {
+                    switch (v[6]) {
+                        case 0x0F: prod = "NTAG213 (144 B)"; break;
+                        case 0x11: prod = "NTAG215 (504 B)"; break;
+                        case 0x13: prod = "NTAG216 (888 B)"; break;
+                        default:   prod = "NTAG21x"; break;
+                    }
+                }
+                printf("Producto   : %s (GET_VERSION:", prod);
+                for (int i = 0; i < vl; ++i) printf(" %02X", v[i]);
+                printf(")\n");
+            } else {
+                printf("Producto   : MIFARE Ultralight clásica (sin GET_VERSION)\n");
+            }
+        } else if ((p.sak & 0x7F) == 0x08 || (p.sak & 0x7F) == 0x18 || (p.sak & 0x7F) == 0x09) {
+            printf("Nota       : MIFARE Classic -> leer sectores necesita claves Crypto1 (parte RF pendiente de tarjeta).\n");
+        }
+        nfc.close(); cap_power(false); return 0;
+    }
+
+    // --- NFC-B ---
+    uint8_t buf[32]; int bl = 0;
+    bool b = false;
+    for (int i = 0; i < 10 && !b; ++i) {
+        nfc.fieldOff(); std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        nfc.configureNfcB(); std::this_thread::sleep_for(std::chrono::milliseconds(6));
+        b = nfc.nfcbDetect(buf, bl);
+    }
+    if (b) {
+        printf("\nTecnología : NFC-B (ISO14443-B)\n");
+        printf("ATQB       :"); for (int i = 0; i < bl; ++i) printf(" %02X", buf[i]); printf("\n");
+        if (bl >= 5) { printf("PUPI       : %02X%02X%02X%02X\n", buf[1], buf[2], buf[3], buf[4]); }
+        printf("Tipo       : ISO14443-B (p. ej. DNI/pasaporte, bancaria, algunos accesos)\n");
+        nfc.close(); cap_power(false); return 0;
+    }
+
+    // --- NFC-V ---
+    bool v = false; int vl = 0;
+    for (int i = 0; i < 10 && !v; ++i) {
+        nfc.fieldOff(); std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        nfc.configureNfcV(); std::this_thread::sleep_for(std::chrono::milliseconds(6));
+        v = nfc.nfcvInventory(buf, vl);
+    }
+    if (v) {
+        printf("\nTecnología : NFC-V (ISO15693 / NFC Forum Type 5)\n");
+        printf("Respuesta  :"); for (int i = 0; i < vl; ++i) printf(" %02X", buf[i]); printf("\n");
+        printf("Tipo       : etiqueta de proximidad ISO15693 (acceso, inventario, biblioteca, esquí...)\n");
+        nfc.close(); cap_power(false); return 0;
+    }
+
+    // --- NFC-F ---
+    bool f = false; int fl = 0;
+    for (int i = 0; i < 10 && !f; ++i) {
+        nfc.fieldOff(); std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        nfc.configureNfcF(); std::this_thread::sleep_for(std::chrono::milliseconds(6));
+        f = nfc.nfcfPoll(buf, fl);
+    }
+    if (f) {
+        printf("\nTecnología : NFC-F (FeliCa)\n");
+        printf("SENSF_RES  :"); for (int i = 0; i < fl; ++i) printf(" %02X", buf[i]); printf("\n");
+        if (fl >= 9) { printf("IDm        : %02X%02X%02X%02X%02X%02X%02X%02X\n",
+                              buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8]); }
+        printf("Tipo       : FeliCa (transporte/pagos, sobre todo Japón)\n");
+        nfc.close(); cap_power(false); return 0;
+    }
+
+    // --- Ninguna respuesta estándar ---
+    printf("\nTecnología : NO responde a ningún protocolo NFC estándar (A/B/V/F).\n");
+    printf("Tipo       : ejecuta `sense` (quitando y poniendo la tarjeta) para distinguir:\n");
+    printf("             - si la amplitud/fase CAMBIAN -> tarjeta PROPIETARIA de 13,56 MHz\n");
+    printf("               (HID iCLASS/Picopass, LEGIC): este Cap la nota pero no la lee sin su protocolo.\n");
+    printf("             - si NO cambian nada -> tarjeta de 125 kHz (EM4100/HID Prox): otra frecuencia,\n");
+    printf("               este Cap no puede leerla.\n");
+    nfc.close(); cap_power(false); return 0;
+}
+
+static int cmd_iclass(bool vdd5) {
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); cap_power(false); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); cap_power(false); return 2; }
+    st25::InitStatus s = nfc.init();
+    if (!s.ok) { printf("init falló: %s\n", s.error.c_str()); cap_power(false); return 1; }
+    printf("Probando iCLASS/Picopass (ACTALL + IDENTIFY sobre ISO15693). Deja la tarjeta pegada...\n");
+    fflush(stdout);
+    uint8_t raw[64]; int len = 0; bool ok = false;
+    for (int i = 0; i < 20 && !ok; ++i) {
+        nfc.fieldOff();
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        nfc.configureNfcV();   // misma capa física ISO15693 que usa iCLASS
+        std::this_thread::sleep_for(std::chrono::milliseconds(6));
+        ok = nfc.iclassIdentify(raw, len);
+    }
+    if (ok) {
+        printf("\n¡Responde a iCLASS!  (es HID iCLASS / Picopass)\n");
+        printf("Respuesta cruda (%d bytes):", len);
+        for (int i = 0; i < len; ++i) printf(" %02X", raw[i]);
+        printf("\n");
+        if (len >= 8) {
+            printf("CSN (anticolisión, 8 bytes):");
+            for (int i = 0; i < 8; ++i) printf(" %02X", raw[i]);
+            printf("\n");
+        }
+    } else {
+        printf("\nNo respondió a iCLASS. O no es iCLASS, o mi capa ISO15693 (sin validar) no la engancha.\n");
+    }
+    nfc.close();
+    cap_power(false);
+    return ok ? 0 : 1;
+}
+
 static int cmd_scan(bool vdd5) {
     cap_power(true);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -651,6 +832,8 @@ int main(int argc, char** argv) {
     if (sub == "detect") return cmd_detect(vdd5, secs);
     if (sub == "read") return cmd_read(vdd5, 232);
     if (sub == "scan") return cmd_scan(vdd5);
+    if (sub == "iclass") return cmd_iclass(vdd5);
+    if (sub == "identify" || sub == "id") return cmd_identify(vdd5);
     if (sub == "sense") return cmd_sense(vdd5, secs);
     if (sub == "rf") return cmd_rf(vdd5);
     if (sub == "dump") return cmd_dump(vdd5);

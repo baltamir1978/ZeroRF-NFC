@@ -501,6 +501,41 @@ bool St25r3916::nfcvInventory(uint8_t* raw, int& len) {
     return true;
 }
 
+bool St25r3916::iclassIdentify(uint8_t* raw, int& len) {
+    len = 0;
+    // Envía una trama iCLASS sobre la capa ISO15693 (SOF 1-de-4 + bytes + EOF).
+    auto sendFrame = [&](const uint8_t* d, int n, bool want_rx, uint8_t* rx, int& rxlen) -> bool {
+        std::vector<uint8_t> enc;
+        enc.push_back(0x21);  // SOF 1-de-4
+        for (int i = 0; i < n; ++i) encode1of4(enc, d[i]);
+        enc.push_back(0x04);  // EOF
+        prepTx(*this);
+        clearIrq();
+        cmd(CMD_CLEAR_FIFO);
+        fifoLoad(enc.data(), enc.size());
+        writeReg16(REG_NUM_TX_BYTES_1, uint16_t((enc.size() & 0x1FF) << 3));
+        cmd(CMD_TRANSMIT_WITHOUT_CRC);
+        if (!want_rx) { waitIrq(IRQ_TXE, 10); return true; }
+        uint8_t buf[64], err;
+        int m = receiveFrame(*this, buf, sizeof(buf), 20, err);
+        if (m <= 0) return false;
+        rxlen = m;
+        for (int i = 0; i < m && i < 64; ++i) rx[i] = buf[i];
+        return true;
+    };
+    const uint8_t act_all[1]  = {0x0A};
+    const uint8_t identify[4] = {0x0C, 0x00, 0x73, 0x33};  // READ/IDENTIFY blk0 + CRC iCLASS
+    int rl = 0;
+    sendFrame(act_all, 1, false, nullptr, rl);
+    usleep(300);
+    if (sendFrame(identify, 4, true, raw, len) && len > 0) return true;
+    // Reintento con IDENTIFY de 1 byte (variante corta)
+    const uint8_t identify1[1] = {0x0C};
+    sendFrame(act_all, 1, false, nullptr, rl);
+    usleep(300);
+    return sendFrame(identify1, 1, true, raw, len) && len > 0;
+}
+
 void St25r3916::configureNfcF() {
     cmd(CMD_STOP_ALL);
     modifyReg(REG_OP_CONTROL, 0x00, OP_WU);
@@ -626,6 +661,26 @@ bool St25r3916::type2Read(uint8_t page, uint8_t out[16]) {
     TxRx r = transceive(c, 2 * 8, true, 20);
     if (!r.ok || r.data.size() < 16) return false;
     for (int i = 0; i < 16; ++i) out[i] = r.data[i];
+    return true;
+}
+
+bool St25r3916::type2GetVersion(uint8_t* ver, int& len) {
+    len = 0;
+    uint8_t c[1] = {0x60};
+    TxRx r = transceive(c, 1 * 8, true, 20);
+    if (!r.ok || r.data.size() < 8) return false;
+    len = (int)r.data.size();
+    for (int i = 0; i < len && i < 16; ++i) ver[i] = r.data[i];
+    return true;
+}
+
+bool St25r3916::rats(uint8_t* ats, int& len) {
+    len = 0;
+    uint8_t c[2] = {0xE0, 0x80};   // RATS: FSDI=8 (256B), CID=0
+    TxRx r = transceive(c, 2 * 8, true, 40);
+    if (!r.ok || r.data.empty()) return false;
+    len = (int)r.data.size();
+    for (int i = 0; i < len && i < 32; ++i) ats[i] = r.data[i];
     return true;
 }
 
