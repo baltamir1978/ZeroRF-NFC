@@ -46,18 +46,24 @@ map and status.
 
 ## Status
 
-**0.2.0 — NFC reader on the real ST25R3916: scanning and saving cards works on the device**
-(MIFARE Ultralight EV1 and NTAG215, full dumps). Emulation is not yet validated. The driver itself was developed and tested on the Cardputer (NFC-A read, Type 2
-dump/write/clone). In the desktop simulator both tools run against a *simulated* radio/reader:
+**0.4.0 — both tools talk to the real hardware on the Cardputer.**
 
-- Sub-GHz: record → decode (Princeton/EV1527) → save (`.sub`, Flipper-compatible) → replay → delete.
-- NFC: scan → show type / UID / NDEF → save (`.nfc`) → emulate → delete.
+NFC (ST25R3916):
+- Scan NFC-A, show the exact product (NTAG213/215/216, MIFARE Ultralight EV1, DESFire EV1 + ATS,
+  Classic 1K/4K), full NTAG/Ultralight dump, save/rename/delete (`.nfc`, Flipper format).
+- MIFARE Classic Crypto1 authentication is implemented (CLI `classic`); confirmed the AUTH
+  handshake with a real card, pending a default-key card to finish validating.
+- Emulation and NFC-B/V/F are written but not validated yet.
 
-On the device, NFC scan (NFC-A + full NTAG/Ultralight dump) and NTAG emulation use the real chip.
-Still missing: the real CC1101 driver, MIFARE Classic over the air, writing cards from the UI.
+Sub-GHz (CC1101):
+- Record a 433 MHz OOK remote (captures GDO0 edge timings, extracts a clean frame), save, rename,
+  replay (real-time async OOK), delete. Tested capturing a fixed-code garage remote; replaying to
+  actually open the door is the remaining real-world test.
+- Fixed-code remotes can be cloned by replay; rolling-code (KeeLoq, …) cannot.
 
-`Tools/zeronfc/` is a command-line tool over the same driver, for diagnostics over SSH
-(`detect`, `read`, `write`, `save`, `load`, `identify`, `scan`, `sense`, `emulate`…).
+The desktop build runs both tools against a *simulated* radio/reader. `Tools/zeronfc/` is a
+command-line tool over the same drivers, for diagnostics over SSH (`detect`, `read`, `identify`,
+`classic`, `cc1101`, `rfrx`, `rftx`, …). A 433 MHz antenna is required to capture or transmit.
 
 ## License
 
