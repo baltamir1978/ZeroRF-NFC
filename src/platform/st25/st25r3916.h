@@ -3,6 +3,8 @@
 // reference/ST25R3916_definition.hpp (M5Unit-NFC, MIT); la secuencia de init está
 // calcada de ese proyecto. Aquí sólo lo que necesita Linux: transporte + bring-up.
 #pragma once
+#include "crypto1.h"
+
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -135,6 +137,14 @@ public:
     // RATS (0xE0 0x80): pide el ATS a una tarjeta ISO14443-4 (DESFire, etc.). Debe estar activada.
     bool rats(uint8_t* ats, int& len);
 
+    // --- MIFARE Classic (Crypto1 por software sobre el ST25R3916) ---
+    // Autenticación de 3 pasos de un sector. key_a=true usa AUTH con clave A (0x60), si no B (0x61).
+    // La tarjeta tiene que estar seleccionada (activateA) y `uid4` son sus 4 bytes de UID
+    // (los últimos 4 si es cascada). Deja el cifrado activo para leer/escribir ese sector.
+    bool mifareAuth(bool key_a, const uint8_t uid4[4], uint8_t block, const uint8_t key[6]);
+    // READ (0x30) cifrado de un bloque de 16 bytes. Requiere mifareAuth antes, del mismo sector.
+    bool mifareReadBlock(uint8_t block, uint8_t out[16]);
+
     // --- NFC-B (ISO14443-B) ---
     void configureNfcB();                        // reconfigura el chip para NFC-B y enciende campo
     bool nfcbDetect(uint8_t* atqb, int& len);    // REQB -> ATQB (true si una tarjeta NFC-B responde)
@@ -170,6 +180,12 @@ private:
     bool enableOsc(std::string& err);
     bool baseBringUp(InitStatus& st);
     bool anticollisionLevel(uint8_t sel_cmd, uint8_t* uid_out, uint8_t& sak_out, bool& cascade);
+
+    // MIFARE Classic: envía una trama cifrada con paridad manual, y recibe/descifra la respuesta.
+    bool mfSendEncrypted(const uint8_t* tx, int tx_len);
+    bool mfTransceiveEncrypted(uint8_t* rx, int& rx_len, const uint8_t* tx, int tx_len,
+                               int timeout_ms, bool include_crc, bool decrypt);
+    mfc::Crypto1 mf_crypto_{0};  // estado del cifrado del sector autenticado
 };
 
 }  // namespace st25

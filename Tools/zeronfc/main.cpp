@@ -235,6 +235,75 @@ static bool select_card(st25::St25r3916& nfc, st25::PiccA& p, int tries = 30) {
     return false;
 }
 
+// Diccionario de claves por defecto de MIFARE Classic (las típicas de fábrica y de muchos
+// sistemas: transporte, hoteles, acceso). No es recuperación de claves, sólo prueba las conocidas.
+static const char* kClassicKeys[] = {
+    "FFFFFFFFFFFF",  // en blanco / de fábrica
+    "A0A1A2A3A4A5",  // clave A por defecto del sector 0 (MAD)
+    "D3F7D3F7D3F7",  // NDEF público
+    "000000000000",
+    "B0B1B2B3B4B5", "4D3A99C351DD", "1A982C7E459A", "AABBCCDDEEFF",
+    "714C5C886E97", "587EE5F9350F", "A0478CC39091", "533CB6C723F6", "8FD0A4F256E9",
+};
+
+static int cmd_classic(bool vdd5) {
+    cap_power(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    if (!ensure_spidev()) { fprintf(stderr, "ERROR: %s no disponible\n", kSpiDev); return 2; }
+    st25::St25r3916 nfc;
+    if (!nfc.open(kSpiDev, vdd5)) { fprintf(stderr, "ERROR: no pude abrir %s\n", kSpiDev); cap_power(false); return 2; }
+    st25::InitStatus s = nfc.init();
+    if (!s.ok) { printf("init falló: %s\n", s.error.c_str()); cap_power(false); return 1; }
+    printf("Acerca la MIFARE Classic...\n"); fflush(stdout);
+    st25::PiccA p;
+    if (!select_card(nfc, p)) { printf("No detecté ninguna tarjeta.\n"); cap_power(false); return 1; }
+    if ((p.sak & 0x1F) != 0x08 && (p.sak & 0x1F) != 0x18 && (p.sak & 0x1F) != 0x09) {
+        printf("SAK %02X: no parece MIFARE Classic.\n", p.sak); nfc.close(); cap_power(false); return 1;
+    }
+    bool is4k = (p.sak & 0x1F) == 0x18;
+    int sectors = is4k ? 40 : 16;
+    char uidhex[32] = {0};
+    for (int j = 0; j < p.uid_len; ++j) sprintf(uidhex + j * 2, "%02X", p.uid[j]);
+    printf("MIFARE Classic %s  UID=%s\n", is4k ? "4K" : "1K", uidhex);
+    const uint8_t* uid4 = p.uid + (p.uid_len > 4 ? p.uid_len - 4 : 0);
+
+    if (getenv("MFDBG")) sectors = 1;  // depuración: sólo el sector 0
+    int ok_sectors = 0;
+    for (int sec = 0; sec < sectors; ++sec) {
+        // Bloques por sector: 4 en los 32 primeros, 16 en los 8 últimos de una 4K.
+        int first = (sec < 32) ? sec * 4 : 128 + (sec - 32) * 16;
+        int nblk = (sec < 32) ? 4 : 16;
+        bool authed = false;
+        const char* used = nullptr;
+        bool used_b = false;
+        for (const char* ks : kClassicKeys) {
+            uint8_t key[6];
+            for (int i = 0; i < 6; ++i) { unsigned v; sscanf(ks + i * 2, "%2x", &v); key[i] = v; }
+            // Re-seleccionar antes de cada intento: un auth fallido deja la tarjeta muda.
+            if (!select_card(nfc, p, 3)) break;
+            if (nfc.mifareAuth(true, uid4, first, key)) { authed = true; used = ks; used_b = false; break; }
+            if (!select_card(nfc, p, 3)) break;
+            if (nfc.mifareAuth(false, uid4, first, key)) { authed = true; used = ks; used_b = true; break; }
+        }
+        if (!authed) { printf("  Sector %2d: --- (ninguna clave conocida)\n", sec); continue; }
+        ++ok_sectors;
+        printf("  Sector %2d: clave %c = %s\n", sec, used_b ? 'B' : 'A', used);
+        for (int b = 0; b < nblk; ++b) {
+            uint8_t blk[16];
+            if (nfc.mifareReadBlock(first + b, blk)) {
+                printf("    blq %3d:", first + b);
+                for (int i = 0; i < 16; ++i) printf(" %02X", blk[i]);
+                printf("\n");
+            } else {
+                printf("    blq %3d: (no se pudo leer)\n", first + b);
+            }
+        }
+    }
+    printf("Sectores leídos: %d/%d\n", ok_sectors, sectors);
+    nfc.close(); cap_power(false);
+    return ok_sectors > 0 ? 0 : 1;
+}
+
 static int cmd_read(bool vdd5, int maxpages) {
     cap_power(true);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -834,6 +903,7 @@ int main(int argc, char** argv) {
     if (sub == "scan") return cmd_scan(vdd5);
     if (sub == "iclass") return cmd_iclass(vdd5);
     if (sub == "identify" || sub == "id") return cmd_identify(vdd5);
+    if (sub == "classic") return cmd_classic(vdd5);
     if (sub == "sense") return cmd_sense(vdd5, secs);
     if (sub == "rf") return cmd_rf(vdd5);
     if (sub == "dump") return cmd_dump(vdd5);

@@ -734,4 +734,178 @@ bool St25r3916::type2Write(uint8_t page, const uint8_t data[4]) {
     return (buf[0] & 0x0F) == 0x0A;    // ACK = 0xA (4 bits)
 }
 
+// ---------------------------------------------------------------------------
+// MIFARE Classic (Crypto1 por software). Portado de la referencia M5Unit-NFC
+// (unit_ST25R3916_nfca.cpp, MIT): autenticación de 3 pasos y lectura cifrada.
+// El cifrado en sí vive en crypto1.h. El truco es que MIFARE usa paridad propia
+// (parte del cifrado), así que se transmite con no_tx_par y el bitstream con la
+// paridad metida a mano; y se recibe sin comprobar CRC.
+// ---------------------------------------------------------------------------
+namespace {
+
+constexpr uint8_t ISO_NO_TX_PAR = 0x80;  // REG_ISO14443A bit7
+
+// CRC_A de ISO14443-A (init 0x6363, polinomio reflejado 0x8408).
+uint16_t crc_a(const uint8_t* d, int n) {
+    uint16_t crc = 0x6363;
+    for (int i = 0; i < n; ++i) {
+        crc ^= d[i];
+        for (int b = 0; b < 8; ++b) crc = (crc & 1) ? (crc >> 1) ^ 0x8408 : (crc >> 1);
+    }
+    return crc;
+}
+
+uint64_t key_to64(const uint8_t k[6]) {
+    uint64_t v = 0;
+    for (int i = 0; i < 6; ++i) v = (v << 8) | k[i];
+    return v;
+}
+
+uint32_t array_to32(const uint8_t a[4]) {
+    return (uint32_t(a[0]) << 24) | (uint32_t(a[1]) << 16) | (uint32_t(a[2]) << 8) | a[3];
+}
+
+// Mete los bits de `in` (in_len bytes) seguidos cada uno de su bit de paridad en `out`.
+void append_parity(uint8_t* out, int out_len, const uint8_t* in, int in_len, uint32_t parity) {
+    for (int i = 0; i < out_len; ++i) out[i] = 0;
+    int bitpos = 0;
+    for (int i = 0; i < in_len; ++i) {
+        uint8_t v = in[i];
+        for (int k = 0; k < 8; ++k) {
+            if ((v >> k) & 1) out[bitpos >> 3] |= 1u << (bitpos & 7);
+            ++bitpos;
+        }
+        if ((parity >> i) & 1) out[bitpos >> 3] |= 1u << (bitpos & 7);
+        ++bitpos;
+    }
+}
+
+} // namespace
+
+// Envía una trama ya con el CRC_A puesto, cifrada y con la paridad a mano (no_tx_par).
+bool St25r3916::mfSendEncrypted(const uint8_t* tx, int tx_len) {
+    if (tx_len <= 0 || tx_len > 32) return false;
+    uint8_t tmp[34];
+    memcpy(tmp, tx, tx_len);
+    uint16_t crc = crc_a(tx, tx_len);
+    tmp[tx_len] = crc & 0xFF;
+    tmp[tx_len + 1] = crc >> 8;
+    const int with_crc = tx_len + 2;
+
+    uint8_t enc[34];
+    uint32_t parity = mf_crypto_.encrypt(enc, tmp, with_crc);
+
+    const int total_bits = 9 * with_crc;
+    const int bs_len = (total_bits + 7) >> 3;
+    uint8_t bitstream[40];
+    append_parity(bitstream, bs_len, enc, with_crc, parity);
+
+    writeReg(REG_ISO14443A, ISO_NO_TX_PAR);
+    setNoCrcRx(*this, true);
+    clearIrq();
+    cmd(CMD_CLEAR_FIFO);
+    fifoLoad(bitstream, bs_len);
+    writeReg16(REG_NUM_TX_BYTES_1, uint16_t(((total_bits >> 3) << 3) | (total_bits & 0x07)));
+    cmd(CMD_TRANSMIT_WITHOUT_CRC);
+    return true;
+}
+
+bool St25r3916::mfTransceiveEncrypted(uint8_t* rx, int& rx_len, const uint8_t* tx, int tx_len,
+                                      int timeout_ms, bool include_crc, bool decrypt) {
+    prepTx(*this);
+    if (!mfSendEncrypted(tx, tx_len)) return false;
+
+    uint8_t err = 0;
+    uint8_t buf[32];
+    int n = receiveFrame(*this, buf, sizeof(buf), timeout_ms, err);
+    if (n <= 0) return false;
+
+    if (decrypt) {
+        if (n == 1) {                       // ACK/NACK de 4 bits
+            uint8_t ret = buf[0] & 0x0F, res = 0;
+            for (int b = 0; b < 4; ++b) res |= (mf_crypto_.step_with(0) ^ ((ret >> b) & 1)) << b;
+            buf[0] = res;
+            if (res != 0x0A) { rx_len = 0; return false; }
+        } else {
+            for (int i = 0; i < n; ++i) buf[i] ^= mf_crypto_.step8(0);
+        }
+    }
+    if (include_crc) {
+        if (n < 2) return false;
+        uint16_t crc = crc_a(buf, n - 2);
+        if ((crc & 0xFF) != buf[n - 2] || (crc >> 8) != buf[n - 1]) return false;
+        n -= 2;
+    }
+    if (n > rx_len) n = rx_len;
+    memcpy(rx, buf, n);
+    rx_len = n;
+    return true;
+}
+
+bool St25r3916::mifareAuth(bool key_a, const uint8_t uid4[4], uint8_t block, const uint8_t key[6]) {
+    // 1) AUTH (0x60/0x61 + bloque) con CRC estándar; la tarjeta responde Nt (4 bytes, sin CRC).
+    prepTx(*this);
+    setAntcl(*this, false);
+    writeReg(REG_ISO14443A, 0x00);    // paridad estándar
+    setNoCrcRx(*this, true);          // el nonce no lleva CRC
+    clearIrq();
+    cmd(CMD_CLEAR_FIFO);
+    uint8_t frame[2] = {uint8_t(key_a ? 0x60 : 0x61), block};
+    fifoLoad(frame, 2);
+    writeReg16(REG_NUM_TX_BYTES_1, uint16_t(2 << 3));
+    cmd(CMD_TRANSMIT_WITH_CRC);
+
+    uint8_t err = 0, rb[8];
+    int n = receiveFrame(*this, rb, sizeof(rb), 20, err);
+    const bool dbg = getenv("MFDBG") != nullptr;
+    if (dbg) fprintf(stderr, "    [auth blk %u] AUTH1 n=%d err=%02X Nt=%02X%02X%02X%02X\n",
+                     block, n, err, rb[0], rb[1], rb[2], rb[3]);
+    if (n < 4) return false;
+    uint32_t Nt = array_to32(rb);
+
+    usleep(90);  // esperar antes de responder (el protocolo pide >= 86,4 us tras recibir Nt)
+
+    // 2) Responder {Nr}{Ar} cifrado con paridad manual; la tarjeta responde {At} (4 bytes).
+    const uint32_t u32 = array_to32(uid4);
+    const uint64_t key48 = key_to64(key);
+    uint32_t Nr = 0x4F6D3A1Bu;         // nonce del lector: fijo nos vale (el reto es Nt)
+    uint32_t Ar = 0, suc3 = 0;
+
+    mf_crypto_.init(key48);
+    (void)mf_crypto_.inject(u32, Nt, false);
+    mfc::suc_23(mfc::byteswap32(Nt), Ar, suc3);
+
+    uint8_t AB[8];
+    uint32_t parity = mf_crypto_.encrypt(AB, Nr, Ar);
+    uint8_t bitstream[9];
+    append_parity(bitstream, 9, AB, 8, parity);
+
+    cmd(CMD_RESET_RX_GAIN);
+    writeReg16(REG_NRT_1, 0x0350);
+    writeReg(REG_ISO14443A, ISO_NO_TX_PAR);
+    setNoCrcRx(*this, true);
+    clearIrq();
+    cmd(CMD_CLEAR_FIFO);
+    fifoLoad(bitstream, 9);
+    writeReg16(REG_NUM_TX_BYTES_1, uint16_t(9 << 3));
+    cmd(CMD_TRANSMIT_WITHOUT_CRC);
+
+    uint8_t ba[8];
+    n = receiveFrame(*this, ba, sizeof(ba), 20, err);
+    if (dbg) fprintf(stderr, "    [auth blk %u] AUTH2 n=%d err=%02X Nt'=%08X suc3=%08X Nr=%08X Ar=%08X\n",
+                     block, n, err, Nt, suc3, Nr, Ar);
+    if (n < 4) return false;
+
+    uint32_t at = 0;
+    for (int i = 0; i < 4; ++i) at |= uint32_t(ba[i] ^ mf_crypto_.step8(0)) << (8 * i);
+    if (dbg) fprintf(stderr, "    [auth blk %u] At=%08X %s\n", block, at, at == suc3 ? "OK" : "MISMATCH");
+    return at == suc3;    // 3er paso correcto = autenticados
+}
+
+bool St25r3916::mifareReadBlock(uint8_t block, uint8_t out[16]) {
+    uint8_t cmd_frame[2] = {0x30, block};
+    int rx_len = 16;
+    return mfTransceiveEncrypted(out, rx_len, cmd_frame, 2, 20, true, true) && rx_len == 16;
+}
+
 }  // namespace st25

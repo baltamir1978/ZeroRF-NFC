@@ -106,6 +106,20 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **MIFARE Classic (Crypto1) — autenticación portada y probada en el aparato (23-nov-2026).**
+  En `st25r3916.cpp`: `mifareAuth(key_a, uid4, block, key)` (3 pasos: AUTH1 con CRC → nonce;
+  AUTH2 {Nr}{Ar} cifrado con paridad manual, `usleep(90)` antes; comprueba At==suc3) y
+  `mifareReadBlock`. El cifrado es `crypto1.h`; helpers `mfSendEncrypted`/`mfTransceiveEncrypted`.
+  Comando de la herramienta: `zeronfc classic` (recorre los sectores con un diccionario de claves;
+  `MFDBG=1` traza el handshake y limita al sector 0). **Confirmado en hardware:** AUTH1 recibe el
+  nonce de una Classic 1K real (UID 255778B9, SAK 08). **Pero 0 sectores abiertos:** esa tarjeta
+  (acceso/transporte) usa **claves propias**, no las de fábrica, y AUTH2 no responde con ninguna
+  conocida. **Falta validar el AUTH2 con una MIFARE Classic de claves conocidas** (una en blanco,
+  todo `FFFFFFFFFFFF`): hasta entonces no se puede distinguir «clave incorrecta» de un bug fino en
+  el cifrado/tiempo. Recuperar claves propias (nested/darkside) es territorio Proxmark, fuera de
+  alcance. La UI aún no expone Classic (sólo escanea NFC-A + vuelca Type 2); se añadirá cuando una
+  tarjeta abra de verdad. Las tarjetas de acceso de Bruno de 13,56 son casi todas **DESFire EV1**
+  (ATS `06 75 77 81 02 80`): sólo UID+ATS, los ficheros van cifrados (AES/DES).
 - **Emulación NFC-A — diagnosticada en el aparato (23-nov-2026, con el móvil de Bruno, que ya lee
   tarjetas).** Con `Tools/zeronfc/emudiag.cpp` (dev-tool: pone el modo target y vuelca registros):
   1. **Bug encontrado y corregido:** el umbral del detector de campo externo (`REG_EFD_ACT_THR`)
