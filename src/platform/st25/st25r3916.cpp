@@ -115,7 +115,7 @@ bool St25r3916::enableOsc(std::string& err) {
         if (readReg(REG_AUX_DISPLAY) & AUX_OSC_OK) return true;
         sleep_ms(1);
     }
-    err = "oscilador no estabiliza (osc_ok=0)";
+    err = "oscillator not stable (osc_ok=0)";
     return false;
 }
 
@@ -131,7 +131,7 @@ bool St25r3916::baseBringUp(InitStatus& st) {
         if (st.ic_type == 0x05 && st.ic_rev != 0) { detected = true; break; }
         sleep_ms(10);
     }
-    if (!detected) { st.error = "ST25R3916 no detectado"; return false; }
+    if (!detected) { st.error = "ST25R3916 not detected"; return false; }
 
     // 1) Reset defensivo
     cmd(CMD_STOP_ALL);
@@ -608,7 +608,7 @@ void St25r3916::writePtMemoryA(const uint8_t* d, int n) {
 
 bool St25r3916::runEmulationA(const PiccA& p, const uint8_t* mem, int nbytes, int secs,
                               EmuStats& stats, std::string& err, const std::atomic<bool>* stop) {
-    if (p.uid_len != 4 && p.uid_len != 7) { err = "sólo UID de 4 o 7 bytes"; return false; }
+    if (p.uid_len != 4 && p.uid_len != 7) { err = "only 4- or 7-byte UIDs"; return false; }
     InitStatus st;
     if (!baseBringUp(st)) { err = st.error; return false; }
 

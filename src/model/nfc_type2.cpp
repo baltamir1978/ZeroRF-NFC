@@ -24,8 +24,16 @@ Type2Layout type2_layout(const std::vector<uint8_t>& version, std::size_t dumped
         }
         return l;
     }
-    if (dumped_pages == 16) {
-        l = {"Ultralight", 16, 4, 15};
+    // Sin GET_VERSION (Ultralight original, o tarjetas guardadas antes de la 0.3.0, que no lo
+    // apuntaban): el número de páginas volcadas es distinto en cada modelo.
+    switch (dumped_pages) {
+        case 16: l = {"Ultralight", 16, 4, 15}; break;
+        case 20: l = {"Ultralight EV1 / NTAG210", 20, 4, 15}; break;
+        case 41: l = {"Ultralight EV1 / NTAG212", 41, 4, 35}; break;
+        case 45: l = {"NTAG213", 45, 4, 39}; break;
+        case 135: l = {"NTAG215", 135, 4, 129}; break;
+        case 231: l = {"NTAG216", 231, 4, 225}; break;
+        default: break;
     }
     return l;
 }

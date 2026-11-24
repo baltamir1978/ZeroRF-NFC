@@ -12,7 +12,7 @@ set(APP_DEBIAN_ARCHITECTURE "arm64" CACHE STRING "Debian package architecture")
 # Deliberately a placeholder: the store rejects packages whose Maintainer is
 # still a template/M5Stack identity, so set your own name and email here.
 set(APP_MAINTAINER "baltamir1978 <baltamir1978@users.noreply.github.com>" CACHE STRING "Debian package maintainer")
-set(APP_PACKAGE_DESCRIPTION "Turns off almost any TV with the CardputerZero infrared LED" CACHE STRING "Debian package summary")
+set(APP_PACKAGE_DESCRIPTION "Sub-GHz remotes (CC1101) and NFC cards (ST25R3916) on the Cap CC1101+NFC" CACHE STRING "Debian package summary")
 set(APP_INSTALL_SYSTEMD_SERVICE OFF CACHE BOOL "Install a systemd service file for embedded deployments")
 
 set(APP_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/package")

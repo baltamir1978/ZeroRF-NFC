@@ -49,7 +49,9 @@ void test_layouts() {
     CHECK(nfc::type2_layout(version_of(0x03, 0x0B), 0).last_user == 15);
     CHECK(nfc::type2_layout(version_of(0x04, 0x0E), 0).name == "NTAG212");
     CHECK(nfc::type2_layout({}, 16).name == "Ultralight");
-    CHECK(!nfc::type2_layout({}, 20).known());
+    CHECK(nfc::type2_layout({}, 135).name == "NTAG215");
+    CHECK(nfc::type2_layout({}, 20).last_user == 15);
+    CHECK(!nfc::type2_layout({}, 99).known());
     CHECK(!nfc::type2_layout(version_of(0x04, 0x99), 0).known());
 }
 
@@ -88,6 +90,16 @@ void test_bigger_target_and_errors() {
     CHECK(nfc::plan_type2_write(src, nfc::Type2Layout{}).error == "Unknown target tag model");
 }
 
+// Una NTAG215 guardada sin GET_VERSION (como las de la 0.2): no se deben copiar sus páginas de
+// configuración del final, ni dar «no cabe» por ellas.
+void test_dump_without_version() {
+    nfc::Card src = card_with(0x11, 135, 60);
+    src.version.clear();
+    const auto plan = nfc::plan_type2_write(src, nfc::type2_layout(version_of(0x04, 0x11), 0));
+    CHECK(plan.ok());
+    CHECK(plan.pages.back().first == 129);
+}
+
 void test_locks() {
     CHECK(!nfc::type2_static_locked({0x44, 0x00, 0x00, 0x00}));
     CHECK(nfc::type2_static_locked({0x44, 0x00, 0x01, 0x00}));
@@ -101,6 +113,7 @@ int main() {
     test_same_model();
     test_smaller_target();
     test_bigger_target_and_errors();
+    test_dump_without_version();
     test_locks();
     if (failures == 0) std::printf("nfc_type2_test: OK\n");
     return failures == 0 ? 0 : 1;

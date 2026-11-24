@@ -106,6 +106,29 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.5.4 (24-nov-2026) — instalada en cpzero; lo nuevo visto en la pantalla del aparato.**
+  Con el aparato encendido (Bruno no podía acercar tarjetas ni el mando):
+  - **El mando del garaje («madrid») sale como «Fixed code 95 bit 0x71231778000… 268/540 us»**
+    (no 77: lo de 77 era de la extracción de la 0.4). No lo reconocía la 0.5.0: lleva una
+    **cabecera de 8 elementos** de otros anchos (2·Te, 2·Te, 3·Te, 3·Te, 2·Te, 2·Te, Te, Te) antes
+    de los bits 1:2 de pulso + silencio. `decode_fixed` prueba ahora a saltar 0-8 elementos y vale
+    el primer inicio desde el que **la trama entera se decodifica** (no basta con que queden dos
+    anchos: con 4 saltados ya quedaban dos anchos y los dos pares de cabecera rompían el PWM).
+    Añadido también **Manchester** (tramos de 1 o 2 medios bits; nombre `MAN<n>-xxxx`), por si
+    aparece un mando así; con pruebas de las dos cosas.
+  - **Menú principal:** en el aparato las fuentes salen más altas que en el simulador y el título
+    de cada tarjeta se montaba sobre el subtítulo; tarjetas de 52 px (antes 46).
+  - **Tarjetas guardadas sin GET_VERSION** (las de la 0.2): el modelo se deduce de las páginas
+    volcadas (16, 20, 41, 45, 135, 231 son de modelos distintos), en `card_product` (la NTAG215
+    salía como «MIFARE Ultralight (clásica)», en español) y en `type2_layout` (sin eso, escribir
+    una 215 antigua habría dado «no cabe» por sus páginas de configuración).
+  - Textos de error que llegaban a la pantalla en español (radio y driver NFC), en inglés.
+  - Descripción del paquete: era la de TV-B-Gone («Turns off almost any TV…»), heredada de la
+    plantilla; está en `cmake/cm0-package.cmake` como variable de **caché**: tras cambiarla hay
+    que borrar `build/*/CMakeCache.txt` o sigue la vieja.
+  - **Falta (con Bruno delante):** escribir una NTAG con W (la prueba segura: la NTAG215 sobre sí
+    misma, `card-04DEAD62D42A81`, que no cambia nada) y que la reemisión abra el garaje.
+
 - **0.5.0 (24-nov-2026) — mandos reconocidos y escribir tarjetas.** Lo pidió Bruno («sigue
   trabajando lo que puedas»), con el aparato apagado: todo probado en el simulador y en ctest;
   **sin probar en el aparato** (`.deb` en `~/Documentos/Software/ZeroRF-NFC-0.5.0.deb`, sin instalar).
@@ -115,7 +138,7 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
     silencio desde el principio, o silencio + pulso tras un pulso de arranque); bit 1 = el primero
     del par es el largo. Con eso reconoce **CAME** (Te ≈ 320 µs, 1:2, 12/24 bits) y **NICE FLO**
     (Te ≈ 700 µs), y lo demás de forma reconocible sale como **«Fixed code N bit»** con su código
-    en hex (también > 64 bits: `code_hex`), como el mando del garaje de Bruno (1:2, ~77 bits).
+    en hex (también > 64 bits: `code_hex`), como el mando del garaje de Bruno (1:2; 95 bits, ver 0.5.4).
     **Arreglado de paso:** el buscador de Princeton aceptaba un mando 1:2 como 1:3 (su ±40 % deja
     pasar 2·Te por 3·Te) y daba 24 bits inventados; ahora manda el análisis de forma si dice otra
     cosa. Al grabar, el nombre sale de `suggested_name` (`PT-…`, `CAME-…`, `NICE-…`, `FIX77-9C2E`,
@@ -136,8 +159,7 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
   - Pruebas: 8 ejecutables de ctest (nuevos: CAME/NICE, código fijo genérico con ruido y trama
     cortada, nombres, rechazo de tres anchos; `nfc_type2_test`: disposiciones, mismo modelo,
     destino menor/mayor, bloqueo).
-  - **Falta en el aparato:** instalar la 0.5.0; ver qué dice de los mandos guardados (el del garaje
-    debería salir como «Fixed code 77 bit»); escribir una NTAG con W (mejor una de usar y tirar).
+  - Instalada y vista en el aparato con la 0.5.4 (arriba).
 
 - **0.4.0 (23-nov-2026) — Sub-GHz COMPLETO en la app (captura + reemisión reales) + renombrar.**
   `platform::Cc1101` ya habla con el radio en el aparato (antes era sim/stub): `run_receive_device`

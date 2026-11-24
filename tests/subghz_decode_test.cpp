@@ -145,6 +145,55 @@ void test_rejects_three_widths() {
     CHECK(!subghz::decode(s).ok());
 }
 
+// Cabecera de otros anchos antes de los datos, como el mando del garaje de Bruno (2·Te, 2·Te,
+// 3·Te, 3·Te, 2·Te, 2·Te, Te, Te y luego bits 1:2 de pulso + silencio). Sin pausas: es una trama
+// ya extraída, como las que guarda la app.
+void test_header_skipped() {
+    const int32_t te = 270;
+    subghz::Signal s;
+    s.timings = {2 * te, -2 * te, 3 * te, -3 * te, 2 * te, -2 * te, te, -te};
+    const uint32_t code = 0xB5A3C1u; // 24 bits
+    for (int b = 23; b >= 0; --b) {
+        const bool one = (code >> b) & 1u;
+        s.timings.push_back(one ? 2 * te : te);
+        s.timings.push_back(one ? -te : -2 * te);
+    }
+    const subghz::Decoded d = subghz::decode(s);
+    CHECK(d.protocol == subghz::Protocol::FixedCode);
+    CHECK(d.bits == 24);
+    CHECK(d.key == code);
+    CHECK(d.te_us == 270);
+}
+
+// Manchester: medio bit de 400 µs; bit 1 = alto + bajo.
+void test_manchester() {
+    const int32_t half = 400;
+    const uint64_t code = 0xA5C3F00Full; // 32 bits
+    std::vector<bool> levels;
+    for (int b = 31; b >= 0; --b) {
+        const bool one = (code >> b) & 1u;
+        levels.push_back(one);
+        levels.push_back(!one);
+    }
+    subghz::Signal s;
+    for (int r = 0; r < 3; ++r) {
+        s.timings.push_back(-15000);
+        std::size_t i = 0;
+        while (i < levels.size()) {
+            std::size_t j = i;
+            while (j < levels.size() && levels[j] == levels[i]) ++j;
+            const int32_t d = static_cast<int32_t>(j - i) * half;
+            s.timings.push_back(levels[i] ? d : -d);
+            i = j;
+        }
+    }
+    const subghz::Decoded d = subghz::decode(s);
+    CHECK(d.protocol == subghz::Protocol::Manchester);
+    CHECK(d.bits == 32);
+    CHECK(d.key == code);
+    CHECK(subghz::suggested_name(d, s.timings.size()) == "MAN32-F00F");
+}
+
 } // namespace
 
 int main() {
@@ -155,6 +204,8 @@ int main() {
     test_generic_fixed_code();
     test_names();
     test_rejects_three_widths();
+    test_header_skipped();
+    test_manchester();
     if (failures == 0) {
         std::printf("subghz_decode_test: OK\n");
     }

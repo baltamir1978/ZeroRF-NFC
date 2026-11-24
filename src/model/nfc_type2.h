@@ -33,7 +33,8 @@ struct Type2Layout {
 
 /**
  * La disposición a partir de GET_VERSION (byte 6 = tamaño). Sin GET_VERSION (la Ultralight
- * original no lo tiene) se acepta como Ultralight de 16 páginas si el volcado tiene 16.
+ * original no lo tiene, y las tarjetas guardadas antes de la 0.3.0 no lo apuntaban) se deduce del
+ * número de páginas volcadas, que es distinto en cada modelo.
  */
 Type2Layout type2_layout(const std::vector<uint8_t>& version, std::size_t dumped_pages);
 

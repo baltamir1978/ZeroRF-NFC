@@ -206,7 +206,7 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
     if (!radio.open() || !radio.present()) {
         if (sw >= 0) ::close(sw);
         ::close(chip);
-        set_state(State::Failed, "CC1101 no responde");
+        set_state(State::Failed, "CC1101 not responding (is the cap on?)");
         return;
     }
     uint32_t f = radio.setFrequency(frequency_hz);
@@ -223,7 +223,7 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
         radio.close();
         if (sw >= 0) ::close(sw);
         ::close(chip);
-        set_state(State::Failed, "No pude leer GDO0");
+        set_state(State::Failed, "Cannot read GDO0 (GPIO15)");
         return;
     }
 
@@ -273,7 +273,7 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
 }
 
 void Cc1101::run_transmit_device(const subghz::Signal& signal, int repeats) {
-    if (signal.timings.empty()) { set_state(State::Failed, "señal vacía"); return; }
+    if (signal.timings.empty()) { set_state(State::Failed, "Empty signal"); return; }
     if (repeats < 1) repeats = 1;
 
     CapPower power;
@@ -282,12 +282,12 @@ void Cc1101::run_transmit_device(const subghz::Signal& signal, int repeats) {
     if (chip < 0) { set_state(State::Failed, "No /dev/gpiochip0"); return; }
     int sw = gpio_out_hold(chip, kRfSw0Line, 1);
     int data = gpio_out_hold(chip, kGdo0Line, 0);  // GDO0 = dato de TX, empieza sin portadora
-    if (data < 0) { if (sw>=0) ::close(sw); ::close(chip); set_state(State::Failed, "No pude tomar GDO0"); return; }
+    if (data < 0) { if (sw>=0) ::close(sw); ::close(chip); set_state(State::Failed, "Cannot drive GDO0 (GPIO15)"); return; }
 
     cc::Cc1101 radio;
     if (!radio.open() || !radio.present()) {
         ::close(data); if (sw>=0) ::close(sw); ::close(chip);
-        set_state(State::Failed, "CC1101 no responde");
+        set_state(State::Failed, "CC1101 not responding (is the cap on?)");
         return;
     }
     radio.configureOokTx(radio.setFrequency(signal.frequency_hz ? signal.frequency_hz : 433920000));

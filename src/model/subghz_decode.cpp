@@ -163,6 +163,30 @@ uint64_t bits_to_key(const std::vector<bool>& bits) {
 
 bool between(double v, double lo, double hi) { return v >= lo && v <= hi; }
 
+// Manchester: cada bit son dos medios bits de nivel contrario, así que la línea sólo tiene
+// tramos de 1 o 2 medios bits (proporción 1:2) y, a diferencia del PWM, puede haber dos cortos o
+// dos largos seguidos. Se pasa la trama a medios bits y se emparejan en las dos fases posibles;
+// bit 1 = alto y luego bajo. Sobra como mucho un medio bit al final (se funde con la pausa).
+bool manchester_bits(const std::vector<int32_t>& frame, int32_t half, std::vector<bool>& bits) {
+    std::vector<bool> levels;
+    for (int32_t d : frame) {
+        const int n = static_cast<int>(std::lround(static_cast<double>(std::abs(d)) / half));
+        if (n < 1 || n > 2) return false;
+        for (int i = 0; i < n; ++i) levels.push_back(d > 0);
+    }
+    for (std::size_t phase = 0; phase < 2; ++phase) {
+        bits.clear();
+        std::size_t i = phase;
+        bool ok = true;
+        for (; i + 1 < levels.size(); i += 2) {
+            if (levels[i] == levels[i + 1]) { ok = false; break; }
+            bits.push_back(levels[i]);
+        }
+        if (ok && static_cast<int>(bits.size()) >= kMinBits) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 const char* protocol_name(Protocol protocol) {
@@ -175,6 +199,8 @@ const char* protocol_name(Protocol protocol) {
             return "NICE FLO";
         case Protocol::FixedCode:
             return "Fixed code";
+        case Protocol::Manchester:
+            return "Manchester";
         case Protocol::Unknown:
         default:
             return "Unknown";
@@ -265,26 +291,25 @@ Signal encode_princeton(uint64_t key,
     return signal;
 }
 
-Decoded decode_fixed(const Signal& signal) {
-    const auto frames = split_frames(signal.timings);
-    const std::vector<int32_t>* frame = modal_frame(frames);
-    if (frame == nullptr) return Decoded{};
+namespace {
 
+// Decodifica una trama ya sin cabecera, o devuelve Unknown.
+Decoded decode_body(const std::vector<int32_t>& frame, uint32_t frequency_hz) {
     int32_t te_short = 0, te_long = 0;
-    if (!two_widths(*frame, te_short, te_long)) return Decoded{};
+    if (!two_widths(frame, te_short, te_long)) return Decoded{};
     const double ratio = static_cast<double>(te_long) / te_short;
 
     // Los dos emparejamientos posibles. En CAME y NICE el par es silencio + pulso tras un pulso
     // de arranque; en Princeton y casi todos los demás, pulso + silencio desde el principio.
-    std::vector<bool> pulse_first, silence_first;
-    const std::size_t pulse_offset = (*frame)[0] > 0 ? 0 : 1;
-    const bool pf = pair_bits(*frame, pulse_offset, te_short, te_long, pulse_first);
-    const bool sf = pair_bits(*frame, pulse_offset + 1, te_short, te_long, silence_first);
+    std::vector<bool> pulse_first, silence_first, manchester;
+    const std::size_t pulse_offset = frame[0] > 0 ? 0 : 1;
+    const bool pf = pair_bits(frame, pulse_offset, te_short, te_long, pulse_first);
+    const bool sf = pair_bits(frame, pulse_offset + 1, te_short, te_long, silence_first);
 
     Decoded result;
     result.te_us = static_cast<uint32_t>(te_short);
     result.te_long_us = static_cast<uint32_t>(te_long);
-    result.frequency_hz = signal.frequency_hz;
+    result.frequency_hz = frequency_hz;
 
     const std::vector<bool>* bits = nullptr;
     if (sf && between(ratio, 1.6, 2.5) && (silence_first.size() == 12 || silence_first.size() == 24)) {
@@ -299,6 +324,10 @@ Decoded decode_fixed(const Signal& signal) {
         result.protocol = Protocol::FixedCode;
         bits = pf ? &pulse_first : &silence_first;
     }
+    if (bits == nullptr && between(ratio, 1.6, 2.5) && manchester_bits(frame, te_short, manchester)) {
+        result.protocol = Protocol::Manchester;
+        bits = &manchester;
+    }
     if (bits == nullptr) return Decoded{};
 
     result.bits = static_cast<uint8_t>(std::min<std::size_t>(bits->size(), 255));
@@ -307,12 +336,30 @@ Decoded decode_fixed(const Signal& signal) {
     return result;
 }
 
+} // namespace
+
+Decoded decode_fixed(const Signal& signal) {
+    const auto frames = split_frames(signal.timings);
+    const std::vector<int32_t>* frame = modal_frame(frames);
+    if (frame == nullptr) return Decoded{};
+
+    // Muchos mandos llevan una cabecera de otros anchos antes de los datos (el del garaje de
+    // Bruno: 2·Te alto, 2·Te bajo, 3·Te, 3·Te, 2·Te, 2·Te, Te, Te). Se prueba a saltar hasta 8
+    // elementos y vale el primer inicio desde el que la trama entera se decodifica.
+    for (std::size_t skip = 0; skip <= 8 && skip + kMinFrameElements <= frame->size(); ++skip) {
+        const std::vector<int32_t> body(frame->begin() + static_cast<std::ptrdiff_t>(skip), frame->end());
+        const Decoded d = decode_body(body, signal.frequency_hz);
+        if (d.ok()) return d;
+    }
+    return Decoded{};
+}
+
 std::string describe(const Decoded& d) {
     if (!d.ok()) return "Raw signal (unknown format)";
     std::string hex = d.code_hex;
     if (hex.size() > 12) hex = hex.substr(0, 11) + "...";
     char buf[128];
-    if (d.protocol == Protocol::FixedCode && d.te_us > 0) {
+    if ((d.protocol == Protocol::FixedCode || d.protocol == Protocol::Manchester) && d.te_us > 0) {
         std::snprintf(buf, sizeof(buf), "%s %u bit  0x%s  %u/%u us", protocol_name(d.protocol),
                       static_cast<unsigned>(d.bits), hex.c_str(), static_cast<unsigned>(d.te_us),
                       static_cast<unsigned>(d.te_long_us));
@@ -333,9 +380,11 @@ std::string suggested_name(const Decoded& d, std::size_t timings) {
             return "CAME-" + d.code_hex;
         case Protocol::NiceFlo:
             return "NICE-" + d.code_hex;
-        case Protocol::FixedCode: {
+        case Protocol::FixedCode:
+        case Protocol::Manchester: {
             const std::string tail = d.code_hex.size() > 4 ? d.code_hex.substr(d.code_hex.size() - 4) : d.code_hex;
-            std::snprintf(buf, sizeof(buf), "FIX%u-%s", static_cast<unsigned>(d.bits), tail.c_str());
+            std::snprintf(buf, sizeof(buf), "%s%u-%s", d.protocol == Protocol::Manchester ? "MAN" : "FIX",
+                          static_cast<unsigned>(d.bits), tail.c_str());
             return buf;
         }
         case Protocol::Unknown:

@@ -25,9 +25,11 @@ constexpr std::array<Entry, 2> kEntries = {{
 }};
 
 constexpr int32_t kMargin = 10;
-constexpr int32_t kCardGap = 8;
+constexpr int32_t kCardGap = 6;
 constexpr int32_t kCardWidth = view::kScreenWidth - 2 * kMargin;
-constexpr int32_t kCardHeight = 46;
+// 52 y no 46: en el aparato las fuentes salen más altas que en el simulador y con 46 el título se
+// montaba sobre el subtítulo (visto en cpzero el 24-nov-2026).
+constexpr int32_t kCardHeight = 52;
 
 } // namespace
 

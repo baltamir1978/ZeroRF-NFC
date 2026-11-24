@@ -36,7 +36,20 @@ std::string card_product(const Card& card) {
                 default: return "NTAG21x / Ultralight EV1";
             }
         }
-        return "MIFARE Ultralight (clásica)";
+        // Sin GET_VERSION (Ultralight original, o tarjetas guardadas antes de la 0.3.0, que no lo
+        // apuntaban): el tamaño del volcado también dice el modelo.
+        if (card.block_size == 4) {
+            switch (card.memory.size() / 4) {
+                case 16: return "MIFARE Ultralight";
+                case 20: return "Ultralight EV1 / NTAG210 (48 B)";
+                case 41: return "Ultralight EV1 / NTAG212 (128 B)";
+                case 45: return "NTAG213 (144 B)";
+                case 135: return "NTAG215 (504 B)";
+                case 231: return "NTAG216 (888 B)";
+                default: break;
+            }
+        }
+        return "MIFARE Ultralight / NTAG";
     }
     // DESFire: el ATS típico de EV1 es 06 75 77 81 02 80.
     if (card.type == CardType::MifareDesfire) {

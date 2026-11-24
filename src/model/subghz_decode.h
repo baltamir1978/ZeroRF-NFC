@@ -22,6 +22,7 @@ enum class Protocol {
     Came,
     NiceFlo,
     FixedCode, // código fijo de forma reconocible, marca desconocida
+    Manchester, // codificación Manchester (medio bit corto o largo), marca desconocida
 };
 
 const char* protocol_name(Protocol protocol);
@@ -58,7 +59,7 @@ std::string describe(const Decoded& decoded);
 
 /**
  * Nombre de fichero propuesto para una señal recién capturada: "PT-5A3C1F", "CAME-5A3",
- * "NICE-0F1", "FIX77-9C2E" (bits + los últimos 4 dígitos) o "RAW-<n>" si no se reconoce.
+ * "NICE-0F1", "FIX77-9C2E" (bits + los últimos 4 dígitos), "MAN97-1A2B" o "RAW-<n>".
  */
 std::string suggested_name(const Decoded& decoded, std::size_t timings);
 
