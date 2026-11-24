@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+namespace subghz { struct Decoded; }
+
 namespace screen {
 
 /**
@@ -47,6 +49,7 @@ private:
     void start_rename();
     void finish_rename();
     void on_received();
+    std::string match_saved(const subghz::Decoded& decoded, const std::string& except);
     /** Qué es la señal seleccionada (protocolo, bits, código), leída una vez y guardada. */
     const std::string& selected_info();
 

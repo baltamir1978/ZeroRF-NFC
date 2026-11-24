@@ -104,6 +104,14 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.5.8 (24-nov-2026) â reconoce un mando ya guardado.** La marca no se puede sacar de la
+  seÃ±al (KeeLoq lo usan muchos fabricantes y lo que los distingue es la clave de fÃ¡brica, que no
+  viaja), pero el **nÃºmero de serie sÃ­** y es constante por mando. `subghz::identity(Decoded)` da una
+  clave estable: el serie en KeeLoq (aunque el hop cambie en cada pulsaciÃ³n) y el cÃ³digo en los
+  fijos. Al grabar, `SubGhzScreen::match_saved` compara con las demÃ¡s guardadas y, si coincide, dice
+  Â«same remote as <nombre>Â»; asÃ­ se bautiza un mando una vez (R) y luego se reconoce. Prueba
+  `test_identity` en ctest. Instalada en cpzero.
+
 - **0.5.7 (24-nov-2026) — KeeLoq: la parte cifrada a la vista y aviso más justo.** Instalada en
   cpzero. Reemitir una grabación KeeLoq **puede funcionar**: si el receptor no llegó a oír esa
   pulsación, su contador es válido y la acepta (una vez); y hay clones que repiten siempre la misma

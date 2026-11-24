@@ -82,6 +82,11 @@ struct Extracted {
  */
 Extracted extract_best_frame(const std::vector<int32_t>& capture);
 
+/** Identidad estable de un mando para reconocer si ya está guardado: el número de serie en
+ * KeeLoq (constante aunque el código cambie en cada pulsación) y el código en los fijos. Vacío
+ * si no se reconoció nada (dos capturas de ruido no se dan por el mismo mando). */
+std::string identity(const Decoded& decoded);
+
 /** "Princeton 24 bit · 0x5A3C1F · Te 350 µs" — una línea para enseñar en la pantalla. */
 std::string describe(const Decoded& decoded);
 

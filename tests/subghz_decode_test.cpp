@@ -286,6 +286,17 @@ void test_keeloq() {
     CHECK(subghz::extract_best_frame(capture).decoded.serial == serial);
 }
 
+// identity(): un KeeLoq se reconoce por su serie (aunque el hop cambie); un fijo, por su código.
+void test_identity() {
+    subghz::Decoded a{}; a.protocol = subghz::Protocol::KeeLoq; a.serial = 0x0A1B2C3u; a.hop = 0x11111111u;
+    subghz::Decoded b = a; b.hop = 0x22222222u; // otra pulsacion del mismo mando
+    CHECK(subghz::identity(a) == "KL:0A1B2C3");
+    CHECK(subghz::identity(a) == subghz::identity(b));
+    subghz::Decoded c{}; c.protocol = subghz::Protocol::FixedCode; c.code_hex = "ABCDEF";
+    CHECK(subghz::identity(c) == "Fixed code:ABCDEF");
+    CHECK(subghz::identity(subghz::Decoded{}).empty());
+}
+
 } // namespace
 
 int main() {
@@ -301,6 +312,7 @@ int main() {
     test_extract_from_noisy_capture();
     test_deglitch();
     test_keeloq();
+    test_identity();
     if (failures == 0) {
         std::printf("subghz_decode_test: OK\n");
     }

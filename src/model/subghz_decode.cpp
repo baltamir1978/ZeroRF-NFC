@@ -460,6 +460,16 @@ Extracted extract_best_frame(const std::vector<int32_t>& capture) {
     return best;
 }
 
+std::string identity(const Decoded& d) {
+    if (!d.ok()) return "";
+    char buf[32];
+    if (d.protocol == Protocol::KeeLoq) {
+        std::snprintf(buf, sizeof(buf), "KL:%07X", static_cast<unsigned>(d.serial));
+        return buf;
+    }
+    return std::string(protocol_name(d.protocol)) + ":" + d.code_hex;
+}
+
 std::string describe(const Decoded& d) {
     if (!d.ok()) return "Raw signal (unknown format)";
     if (d.protocol == Protocol::KeeLoq) {

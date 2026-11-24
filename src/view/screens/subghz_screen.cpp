@@ -209,8 +209,26 @@ void SubGhzScreen::on_received() {
         }
     }
     ensure_visible();
-    status_line_ = "Saved: " + subghz::describe(decoded);
+    const std::string known = match_saved(decoded, name);
+    status_line_ = known.empty() ? ("Saved: " + subghz::describe(decoded))
+                                 : ("Saved â same remote as " + known);
     mode_ = Mode::List;
+}
+
+// Nombre de otra seÃ±al guardada que es el mismo mando (misma identidad), o vacÃ­o. Compara el
+// nÃºmero de serie (KeeLoq) o el cÃ³digo (fijos); asÃ­ reconoce un mando ya guardado aunque el
+// cÃ³digo evolutivo cambie en cada pulsaciÃ³n.
+std::string SubGhzScreen::match_saved(const subghz::Decoded& decoded, const std::string& except) {
+    const std::string id = subghz::identity(decoded);
+    if (id.empty()) return "";
+    for (const std::string& other : names_) {
+        if (other == except) continue;
+        subghz::Signal s;
+        std::string err;
+        if (!subghz::load_sub_file(platform::signal_path(other), s, err)) continue;
+        if (subghz::identity(subghz::decode(s)) == id) return other;
+    }
+    return "";
 }
 
 bool SubGhzScreen::handle_key(uint32_t key) {

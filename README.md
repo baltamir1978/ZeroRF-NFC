@@ -51,7 +51,7 @@ map and status.
 - Sub-GHz: a recorded remote is identified by its shape — Princeton/EV1527, CAME, NICE FLO, any
   other two-width fixed code (shown as "Fixed code N bit" with its code, also after a preamble of
   other widths), Manchester, or **KeeLoq** (rolling code: shown with its serial number, button and
-  encrypted "hop" part, and flagged — a recording the receiver never heard may work once). Listening shows "heard 1/3…" and stops as
+  encrypted "hop" part, and flagged — a recording the receiver never heard may work once). A remote you have already saved is recognised by its serial number (KeeLoq) or code (fixed), so once you name yours it is flagged on the next capture. Listening shows "heard 1/3…" and stops as
   soon as the same code has arrived three times
   (ENTER stops and keeps what was recorded); the frame kept is the code most repetitions agree on.
   Recordings are named
