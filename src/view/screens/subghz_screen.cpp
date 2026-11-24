@@ -313,8 +313,9 @@ void SubGhzScreen::poll() {
         }
     } else if (mode_ == Mode::Transmitting) {
         if (status.state == State::Done) {
-            // Un código variable ya usado lo ignora el receptor: se dice, para no buscar el fallo.
-            status_line_ = tx_rolling_ ? "Sent, but rolling code: it won't open" : "Sent " + tx_name_;
+            // Código variable: una grabación que el receptor no llegó a oír vale una vez; después,
+            // según el receptor (y algunos clones repiten siempre la misma trama). Se avisa.
+            status_line_ = tx_rolling_ ? "Sent (rolling code: may work only once)" : "Sent " + tx_name_;
             mode_ = Mode::List;
         } else if (status.state == State::Stopped || status.state == State::Failed) {
             status_line_ = status.state == State::Failed ? ("No radio: " + status.error) : "Stopped";

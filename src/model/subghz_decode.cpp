@@ -362,8 +362,11 @@ bool as_keeloq(Decoded& d, const std::vector<bool>& generic_bits, std::size_t he
     for (int i = 0; i < 4; ++i) button |= static_cast<uint8_t>(bits[60 + i] << i);
     d.protocol = Protocol::KeeLoq;
     d.rolling = true;
+    uint32_t hop = 0;
+    for (int i = 0; i < 32; ++i) hop |= static_cast<uint32_t>(bits[i]) << i;
     d.serial = serial;
     d.button = button;
+    d.hop = hop;
     d.code_hex = bits_to_hex(bits);
     d.key = bits_to_key(bits);
     return true;
@@ -461,8 +464,10 @@ std::string describe(const Decoded& d) {
     if (!d.ok()) return "Raw signal (unknown format)";
     if (d.protocol == Protocol::KeeLoq) {
         char buf[96];
-        std::snprintf(buf, sizeof(buf), "KeeLoq rolling code  SN %07X  btn %u", static_cast<unsigned>(d.serial),
-                      static_cast<unsigned>(d.button));
+        // El código cifrado se enseña para poder comparar dos grabaciones: si sale igual en dos
+        // pulsaciones, el mando (un clon, típicamente) repite siempre la misma trama.
+        std::snprintf(buf, sizeof(buf), "KeeLoq  SN %07X  btn %u  hop %08X", static_cast<unsigned>(d.serial),
+                      static_cast<unsigned>(d.button), static_cast<unsigned>(d.hop));
         return buf;
     }
     std::string hex = d.code_hex;

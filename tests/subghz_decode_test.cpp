@@ -278,7 +278,8 @@ void test_keeloq() {
     CHECK(d.serial == serial);
     CHECK(d.button == button);
     CHECK(subghz::suggested_name(d, s.timings.size()) == "KEELOQ-0A1B2C3");
-    CHECK(subghz::describe(d) == "KeeLoq rolling code  SN 0A1B2C3  btn 5");
+    CHECK(d.hop == hop);
+    CHECK(subghz::describe(d) == "KeeLoq  SN 0A1B2C3  btn 5  hop DEADBEEF");
     // Y desde una captura con ruido, por votación.
     std::vector<int32_t> capture = {300, -1200, 90, -2500, 700, -60, 40};
     capture.insert(capture.end(), s.timings.begin(), s.timings.end());

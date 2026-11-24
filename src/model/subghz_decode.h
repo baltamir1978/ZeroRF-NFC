@@ -41,6 +41,7 @@ struct Decoded {
     bool rolling = false;    // código variable: reemitir una grabación no sirve (por diseño)
     uint32_t serial = 0;     // KeeLoq: número de serie del mando (28 bits, va sin cifrar)
     uint8_t button = 0;      // KeeLoq: botón pulsado (4 bits)
+    uint32_t hop = 0;        // KeeLoq: la parte cifrada (cambia en cada pulsación si el mando es variable de verdad)
 
     bool ok() const {
         return protocol != Protocol::Unknown;

@@ -104,6 +104,15 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.5.7 (24-nov-2026) — KeeLoq: la parte cifrada a la vista y aviso más justo.** Instalada en
+  cpzero. Reemitir una grabación KeeLoq **puede funcionar**: si el receptor no llegó a oír esa
+  pulsación, su contador es válido y la acepta (una vez); y hay clones que repiten siempre la misma
+  trama, con receptores que no miran el contador. Así que el aviso al reemitir pasa de «it won't
+  open» a «Sent (rolling code: may work only once)», y la lista enseña también el **hop** (bits
+  0-31, la parte cifrada; `Decoded::hop`): si dos grabaciones del mismo mando dan el mismo hop, el
+  mando repite siempre la trama. **Ni códigos ni números de serie de los mandos de Bruno en este
+  repositorio (es público)**: lo concreto de sus pruebas va en la memoria local de Claude.
+
 - **0.5.6 (24-nov-2026) — la grabación de la calle era un KeeLoq; progreso al grabar.** Instalada
   en cpzero. La grabación de Bruno volviendo a casa (`RAW-155.sub`, hecha con la 0.5.4) **no es el
   mando del garaje**: preámbulo de 23 tramos de ~390 µs, pausa de ~3,9 ms (10·Te) y 66 bits PWM de
@@ -114,7 +123,7 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
     más corto) de los 60 primeros elementos. `as_keeloq`: 66 bits, Te 250-600 y cabecera ≥ 10
     elementos → `Protocol::KeeLoq`, `rolling`, `serial` (bits 32-59, del menos significativo) y
     `button` (60-63); bit 1 = pulso corto (al revés que el genérico). Esa grabación sale «KeeLoq
-    rolling code SN 0000123 btn 4» (un serie tan bajo es raro pero lo dice la señal), nombre
+    rolling code SN … btn …», nombre
     `KEELOQ-<serie>`. No se descifra nada (ni hace falta para identificarlo).
   - Pantalla: al grabar, «heard 1/3, 2/3…» (`Status::heard`, `Cc1101::kRepeatsNeeded` = 3; lo pidió
     Bruno: «si quieres tres tramas, ponlo en la pantalla»); al reemitir un código variable, «Sent,
@@ -134,7 +143,7 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
     más votado**; si nada se reconoce, la trama más repetida como antes.
   - **El último bit**: el silencio del último bit se funde con la pausa entre tramas y quedaba un
     pulso suelto que se descartaba. Se cuenta por su ancho (no en Princeton: ahí es el pulso de
-    sincronismo). **El mando del garaje tiene 96 bits, no 95**: «Fixed code 96 bit 0xE2462EF…».
+    sincronismo). **El mando del garaje tiene 96 bits, no 95**: «Fixed code 96 bit …».
   - Princeton admite proporción 2,2-3,8 (antes 2,4-3,6: con ruido en los tiempos se escapaba).
   - Cada grabación deja la **captura entera** en `~/.local/share/zerorfnfc/subghz-raw/last-capture.sub`
     (no sale en la lista): traerla con `scp` para estudiar un mando que no se reconozca.
@@ -143,7 +152,7 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 - **0.5.4 (24-nov-2026) — instalada en cpzero; lo nuevo visto en la pantalla del aparato.**
   Con el aparato encendido (Bruno no podía acercar tarjetas ni el mando):
-  - **El mando del garaje («madrid») sale como «Fixed code 95 bit 0x71231778000… 268/540 us»** (96 desde la 0.5.5)
+  - **El mando del garaje («madrid») sale como «Fixed code 95 bit … 268/540 us»** (96 desde la 0.5.5)
     (no 77: lo de 77 era de la extracción de la 0.4). No lo reconocía la 0.5.0: lleva una
     **cabecera de 8 elementos** de otros anchos (2·Te, 2·Te, 3·Te, 3·Te, 2·Te, 2·Te, Te, Te) antes
     de los bits 1:2 de pulso + silencio. `decode_fixed` prueba ahora a saltar 0-8 elementos y vale
