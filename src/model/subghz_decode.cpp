@@ -5,6 +5,7 @@
 #include "subghz_decode.h"
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -204,6 +205,8 @@ const char* protocol_name(Protocol protocol) {
             return "Fixed code";
         case Protocol::Manchester:
             return "Manchester";
+        case Protocol::KeeLoq:
+            return "KeeLoq";
         case Protocol::Unknown:
         default:
             return "Unknown";
@@ -296,8 +299,8 @@ Signal encode_princeton(uint64_t key,
 
 namespace {
 
-// Decodifica una trama ya sin cabecera, o devuelve Unknown.
-Decoded decode_body(const std::vector<int32_t>& frame, uint32_t frequency_hz) {
+// Decodifica una trama ya sin cabecera, o devuelve Unknown. Deja los bits en `out_bits`.
+Decoded decode_body(const std::vector<int32_t>& frame, uint32_t frequency_hz, std::vector<bool>* out_bits = nullptr) {
     int32_t te_short = 0, te_long = 0;
     if (!two_widths(frame, te_short, te_long)) return Decoded{};
     const double ratio = static_cast<double>(te_long) / te_short;
@@ -340,7 +343,30 @@ Decoded decode_body(const std::vector<int32_t>& frame, uint32_t frequency_hz) {
     result.bits = static_cast<uint8_t>(std::min<std::size_t>(bits->size(), 255));
     result.key = bits_to_key(*bits);
     result.code_hex = bits_to_hex(*bits);
+    if (out_bits) *out_bits = *bits;
     return result;
+}
+
+// KeeLoq (HCS200/300/301 de Microchip, la mayoría de mandos de código variable): preámbulo de
+// pulsos de Te, pausa de cabecera de 10·Te y 66 bits PWM de Te/2·Te (0 = pulso largo, 1 = corto),
+// del menos significativo al más: 32 de código cifrado (cambia en cada pulsación), 28 de número de
+// serie, 4 de botón y 2 de estado. El número de serie y el botón van en claro.
+bool as_keeloq(Decoded& d, const std::vector<bool>& generic_bits, std::size_t header_len) {
+    if (d.protocol != Protocol::FixedCode || generic_bits.size() != 66 || header_len < 10) return false;
+    if (!between(d.te_us, 250, 600)) return false;
+    std::vector<bool> bits(generic_bits.size());
+    for (std::size_t i = 0; i < bits.size(); ++i) bits[i] = !generic_bits[i];
+    uint32_t serial = 0;
+    for (int i = 0; i < 28; ++i) serial |= static_cast<uint32_t>(bits[32 + i]) << i;
+    uint8_t button = 0;
+    for (int i = 0; i < 4; ++i) button |= static_cast<uint8_t>(bits[60 + i] << i);
+    d.protocol = Protocol::KeeLoq;
+    d.rolling = true;
+    d.serial = serial;
+    d.button = button;
+    d.code_hex = bits_to_hex(bits);
+    d.key = bits_to_key(bits);
+    return true;
 }
 
 } // namespace
@@ -353,10 +379,25 @@ Decoded decode_fixed(const Signal& signal) {
     // Muchos mandos llevan una cabecera de otros anchos antes de los datos (el del garaje de
     // Bruno: 2·Te alto, 2·Te bajo, 3·Te, 3·Te, 2·Te, 2·Te, Te, Te). Se prueba a saltar hasta 8
     // elementos y vale el primer inicio desde el que la trama entera se decodifica.
-    for (std::size_t skip = 0; skip <= 8 && skip + kMinFrameElements <= frame->size(); ++skip) {
+    // Además, las cabeceras largas que acaban en una pausa (el preámbulo de KeeLoq: 23 pulsos y
+    // una pausa de 10·Te): se prueba también justo después de la primera pausa larga del principio.
+    std::vector<std::size_t> starts;
+    for (std::size_t skip = 0; skip <= 8; ++skip) starts.push_back(skip);
+    {
+        int32_t shortest = INT32_MAX;
+        for (int32_t d : *frame) shortest = std::min(shortest, std::abs(d));
+        for (std::size_t i = 0; i < std::min<std::size_t>(frame->size(), 60); ++i) {
+            if ((*frame)[i] < 0 && -(*frame)[i] >= shortest * 6) { starts.push_back(i + 1); break; }
+        }
+    }
+    for (std::size_t skip : starts) {
+        if (skip + kMinFrameElements > frame->size()) continue;
         const std::vector<int32_t> body(frame->begin() + static_cast<std::ptrdiff_t>(skip), frame->end());
-        const Decoded d = decode_body(body, signal.frequency_hz);
-        if (d.ok()) return d;
+        std::vector<bool> bits;
+        Decoded d = decode_body(body, signal.frequency_hz, &bits);
+        if (!d.ok()) continue;
+        as_keeloq(d, bits, skip);
+        return d;
     }
     return Decoded{};
 }
@@ -418,6 +459,12 @@ Extracted extract_best_frame(const std::vector<int32_t>& capture) {
 
 std::string describe(const Decoded& d) {
     if (!d.ok()) return "Raw signal (unknown format)";
+    if (d.protocol == Protocol::KeeLoq) {
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "KeeLoq rolling code  SN %07X  btn %u", static_cast<unsigned>(d.serial),
+                      static_cast<unsigned>(d.button));
+        return buf;
+    }
     std::string hex = d.code_hex;
     if (hex.size() > 12) hex = hex.substr(0, 11) + "...";
     char buf[128];
@@ -437,6 +484,9 @@ std::string suggested_name(const Decoded& d, std::size_t timings) {
     switch (d.protocol) {
         case Protocol::Princeton:
             std::snprintf(buf, sizeof(buf), "PT-%06llX", static_cast<unsigned long long>(d.key & 0xFFFFFF));
+            return buf;
+        case Protocol::KeeLoq:
+            std::snprintf(buf, sizeof(buf), "KEELOQ-%07X", static_cast<unsigned>(d.serial));
             return buf;
         case Protocol::Came:
             return "CAME-" + d.code_hex;

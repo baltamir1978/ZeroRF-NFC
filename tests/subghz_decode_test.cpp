@@ -253,6 +253,38 @@ void test_deglitch() {
     CHECK((subghz::deglitch({-40, 500}) == std::vector<int32_t>{-40, 500}));
 }
 
+// KeeLoq (HCS301): preámbulo de 23 tramos de Te, pausa de 10·Te y 66 bits (0 = pulso largo),
+// del menos significativo al más: 32 cifrados, 28 de serie, 4 de botón, 2 de estado.
+void test_keeloq() {
+    const int32_t te = 400;
+    const uint32_t hop = 0xDEADBEEFu, serial = 0x0A1B2C3u;
+    const uint8_t button = 0x5;
+    std::vector<bool> bits;
+    for (int i = 0; i < 32; ++i) bits.push_back((hop >> i) & 1u);
+    for (int i = 0; i < 28; ++i) bits.push_back((serial >> i) & 1u);
+    for (int i = 0; i < 4; ++i) bits.push_back((button >> i) & 1u);
+    bits.push_back(false); bits.push_back(false);
+    subghz::Signal s;
+    for (int r = 0; r < 4; ++r) {
+        s.timings.push_back(-15000);
+        for (int i = 0; i < 23; ++i) s.timings.push_back(i % 2 == 0 ? te : -te);
+        s.timings.push_back(-10 * te);
+        for (bool b : bits) { s.timings.push_back(b ? te : 2 * te); s.timings.push_back(b ? -2 * te : -te); }
+    }
+    const subghz::Decoded d = subghz::decode(s);
+    CHECK(d.protocol == subghz::Protocol::KeeLoq);
+    CHECK(d.rolling);
+    CHECK(d.bits == 66);
+    CHECK(d.serial == serial);
+    CHECK(d.button == button);
+    CHECK(subghz::suggested_name(d, s.timings.size()) == "KEELOQ-0A1B2C3");
+    CHECK(subghz::describe(d) == "KeeLoq rolling code  SN 0A1B2C3  btn 5");
+    // Y desde una captura con ruido, por votación.
+    std::vector<int32_t> capture = {300, -1200, 90, -2500, 700, -60, 40};
+    capture.insert(capture.end(), s.timings.begin(), s.timings.end());
+    CHECK(subghz::extract_best_frame(capture).decoded.serial == serial);
+}
+
 } // namespace
 
 int main() {
@@ -267,6 +299,7 @@ int main() {
     test_manchester();
     test_extract_from_noisy_capture();
     test_deglitch();
+    test_keeloq();
     if (failures == 0) {
         std::printf("subghz_decode_test: OK\n");
     }

@@ -133,6 +133,10 @@ void Cc1101::start_receive(uint32_t frequency_hz) {
     keep_ = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        status_.heard = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
         status_.state = State::Receiving;
         status_.activity = 0;
         status_.error.clear();
@@ -233,7 +237,12 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
         if (now >= next_check && durs.size() != checked_size) {
             next_check = now + std::chrono::milliseconds(400);
             checked_size = durs.size();
-            if (subghz::extract_best_frame(durs).votes >= 3) break;
+            const int heard = subghz::extract_best_frame(durs).votes;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                status_.heard = heard;
+            }
+            if (heard >= kRepeatsNeeded) break;
         }
         if (r <= 0) continue;
         gpio_v2_line_event ev;
@@ -361,6 +370,8 @@ void Cc1101::run_receive(uint32_t frequency_hz) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             status_.activity = static_cast<std::size_t>(i);
+            // Como en el aparato: van llegando repeticiones del mando (1/3, 2/3…).
+            if (i >= 30) status_.heard = std::min(kRepeatsNeeded, 1 + (i - 30) / 10);
         }
         // A mitad de la escucha «llega» la señal.
         if (i == 60) {

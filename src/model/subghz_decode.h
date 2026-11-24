@@ -24,6 +24,7 @@ enum class Protocol {
     NiceFlo,
     FixedCode, // código fijo de forma reconocible, marca desconocida
     Manchester, // codificación Manchester (medio bit corto o largo), marca desconocida
+    KeeLoq,     // código variable (HCS de Microchip): reemitirlo no abre, cambia en cada pulsación
 };
 
 const char* protocol_name(Protocol protocol);
@@ -37,6 +38,9 @@ struct Decoded {
     uint32_t te_long_us = 0; // el elemento largo, en µs (Princeton: 3·Te; CAME/NICE: 2·Te)
     uint32_t frequency_hz = 0;
     std::string code_hex;    // todos los bits en hexadecimal (MSB primero), también si son > 64
+    bool rolling = false;    // código variable: reemitir una grabación no sirve (por diseño)
+    uint32_t serial = 0;     // KeeLoq: número de serie del mando (28 bits, va sin cifrar)
+    uint8_t button = 0;      // KeeLoq: botón pulsado (4 bits)
 
     bool ok() const {
         return protocol != Protocol::Unknown;

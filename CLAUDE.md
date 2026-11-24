@@ -104,6 +104,22 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.5.6 (24-nov-2026) — la grabación de la calle era un KeeLoq; progreso al grabar.** Instalada
+  en cpzero. La grabación de Bruno volviendo a casa (`RAW-155.sub`, hecha con la 0.5.4) **no es el
+  mando del garaje**: preámbulo de 23 tramos de ~390 µs, pausa de ~3,9 ms (10·Te) y 66 bits PWM de
+  390/780 µs = **KeeLoq (HCS de Microchip), código variable**: reemitirlo no abre (cada pulsación
+  cambia los 32 bits cifrados; el receptor ignora uno ya usado). Salía RAW porque la cabecera es
+  de 24 elementos y sólo se saltaban 8.
+  - `decode_fixed` prueba también a empezar justo después de la primera pausa larga (≥ 6 × el tramo
+    más corto) de los 60 primeros elementos. `as_keeloq`: 66 bits, Te 250-600 y cabecera ≥ 10
+    elementos → `Protocol::KeeLoq`, `rolling`, `serial` (bits 32-59, del menos significativo) y
+    `button` (60-63); bit 1 = pulso corto (al revés que el genérico). Esa grabación sale «KeeLoq
+    rolling code SN 0000123 btn 4» (un serie tan bajo es raro pero lo dice la señal), nombre
+    `KEELOQ-<serie>`. No se descifra nada (ni hace falta para identificarlo).
+  - Pantalla: al grabar, «heard 1/3, 2/3…» (`Status::heard`, `Cc1101::kRepeatsNeeded` = 3; lo pidió
+    Bruno: «si quieres tres tramas, ponlo en la pantalla»); al reemitir un código variable, «Sent,
+    but rolling code: it won't open».
+
 - **0.5.5 (24-nov-2026) — grabar en la calle: escucha corta y trama buena por votación.** Bruno
   grabó el mando volviendo a casa y la 0.5.4 dijo RAW tras escuchar muchísimo. **Sin la captura
   todavía** (el aparato estaba fuera de Tailscale): arreglado lo que se ve en el código.

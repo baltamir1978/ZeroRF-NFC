@@ -40,6 +40,7 @@ public:
         State state = State::Idle;
         bool simulated = false;
         std::size_t activity = 0; // cuenta que sube mientras trabaja, para dar vidilla a la UI
+        int heard = 0;            // grabando: repeticiones del mismo código oídas (para a las 3)
         std::string error;
     };
 
@@ -80,7 +81,10 @@ private:
     const bool simulated_;
     std::thread worker_;
     std::atomic<bool> stop_{false};
-    std::atomic<bool> keep_{false}; // parar la escucha quedándose con lo grabado
+    std::atomic<bool> keep_{false};
+public:
+    static constexpr int kRepeatsNeeded = 3; // grabar para al oír el mismo código estas veces
+private: // parar la escucha quedándose con lo grabado
 
     mutable std::mutex mutex_;
     Status status_;

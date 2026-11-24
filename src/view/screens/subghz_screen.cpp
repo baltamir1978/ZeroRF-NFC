@@ -140,6 +140,7 @@ void SubGhzScreen::start_transmit() {
         return;
     }
     tx_name_ = name;
+    tx_rolling_ = subghz::decode(signal).rolling;
     status_line_.clear();
     mode_ = Mode::Transmitting;
     radio_.start_transmit(signal, kReplayRepeats);
@@ -312,7 +313,8 @@ void SubGhzScreen::poll() {
         }
     } else if (mode_ == Mode::Transmitting) {
         if (status.state == State::Done) {
-            status_line_ = "Sent " + tx_name_;
+            // Un código variable ya usado lo ignora el receptor: se dice, para no buscar el fallo.
+            status_line_ = tx_rolling_ ? "Sent, but rolling code: it won't open" : "Sent " + tx_name_;
             mode_ = Mode::List;
         } else if (status.state == State::Stopped || status.state == State::Failed) {
             status_line_ = status.state == State::Failed ? ("No radio: " + status.error) : "Stopped";
@@ -378,7 +380,12 @@ void SubGhzScreen::refresh() {
         char detail[64];
         if (mode_ == Mode::Receiving) {
             lv_label_set_text(headline_, radio_.is_simulated() ? "Listening (sim)" : "Listening");
-            std::snprintf(detail, sizeof(detail), "433.92 MHz %.*s", dots, "...");
+            if (status.heard > 0) {
+                std::snprintf(detail, sizeof(detail), "433.92 MHz   heard %d/%d", std::min(status.heard, platform::Cc1101::kRepeatsNeeded),
+                              platform::Cc1101::kRepeatsNeeded);
+            } else {
+                std::snprintf(detail, sizeof(detail), "433.92 MHz %.*s", dots, "...");
+            }
         } else {
             lv_label_set_text(headline_, radio_.is_simulated() ? "Sending (sim)" : "Sending");
             std::snprintf(detail, sizeof(detail), "%s %.*s", tx_name_.c_str(), dots, "...");

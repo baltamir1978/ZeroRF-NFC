@@ -59,6 +59,7 @@ private:
     Mode mode_ = Mode::List;
     std::string status_line_;
     std::string tx_name_;
+    bool tx_rolling_ = false;
     std::string rename_buffer_;
     std::string rename_from_;
     std::map<std::string, std::string> info_cache_;
