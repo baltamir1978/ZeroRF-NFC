@@ -104,9 +104,30 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.5.5 (24-nov-2026) — grabar en la calle: escucha corta y trama buena por votación.** Bruno
+  grabó el mando volviendo a casa y la 0.5.4 dijo RAW tras escuchar muchísimo. **Sin la captura
+  todavía** (el aparato estaba fuera de Tailscale): arreglado lo que se ve en el código.
+  - La escucha duraba **siempre 20 s** (no había nada que la cortara) y ENTER la descartaba. Ahora
+    `run_receive_device` mira cada 400 ms lo capturado y **para en cuanto el mismo código llega 3
+    veces**; ENTER (`Cc1101::finish_receive`) para y se queda con lo grabado; ESC cancela.
+  - La trama se elegía por **longitud más repetida** y los tramos < 60 µs se **tiraban**: con ruido
+    alrededor, o un parpadeo dentro de un pulso (que rompe el emparejamiento de toda la trama),
+    podía salir un trozo de ruido. `subghz::extract_best_frame` (en `model/`, con prueba de una
+    captura con ruido, trama cortada y parpadeos): `deglitch` (un tramo corto se suma al anterior y
+    dos del mismo signo se juntan), parte por pausas, decodifica cada repetición y **gana el código
+    más votado**; si nada se reconoce, la trama más repetida como antes.
+  - **El último bit**: el silencio del último bit se funde con la pausa entre tramas y quedaba un
+    pulso suelto que se descartaba. Se cuenta por su ancho (no en Princeton: ahí es el pulso de
+    sincronismo). **El mando del garaje tiene 96 bits, no 95**: «Fixed code 96 bit 0xE2462EF…».
+  - Princeton admite proporción 2,2-3,8 (antes 2,4-3,6: con ruido en los tiempos se escapaba).
+  - Cada grabación deja la **captura entera** en `~/.local/share/zerorfnfc/subghz-raw/last-capture.sub`
+    (no sale en la lista): traerla con `scp` para estudiar un mando que no se reconozca.
+  - **Sin instalar** (el aparato estaba fuera): instalarla y mirar `last-capture.sub` de la próxima
+    grabación; si sigue saliendo RAW, con esa captura se ve por qué.
+
 - **0.5.4 (24-nov-2026) — instalada en cpzero; lo nuevo visto en la pantalla del aparato.**
   Con el aparato encendido (Bruno no podía acercar tarjetas ni el mando):
-  - **El mando del garaje («madrid») sale como «Fixed code 95 bit 0x71231778000… 268/540 us»**
+  - **El mando del garaje («madrid») sale como «Fixed code 95 bit 0x71231778000… 268/540 us»** (96 desde la 0.5.5)
     (no 77: lo de 77 era de la extracción de la 0.4). No lo reconocía la 0.5.0: lleva una
     **cabecera de 8 elementos** de otros anchos (2·Te, 2·Te, 3·Te, 3·Te, 2·Te, 2·Te, Te, Te) antes
     de los bits 1:2 de pulso + silencio. `decode_fixed` prueba ahora a saltar 0-8 elementos y vale

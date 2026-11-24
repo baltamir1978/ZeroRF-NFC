@@ -125,10 +125,12 @@ bool two_widths(const std::vector<int32_t>& frame, int32_t& te_short, int32_t& t
 
 // Empareja la trama desde `offset` (0 = el par empieza por el primer elemento; 1 = hay un
 // elemento de arranque suelto). Cada par tiene que ser corto+largo o largo+corto: 1 si el
-// primero es el largo. Sobra como mucho un elemento al final (su pareja era la pausa).
+// primero es el largo. Sobra como mucho un elemento al final: su pareja se fundió con la pausa
+// entre tramas, pero el bit se sabe igual por su ancho, y queda en `trailing` (-1 si no sobra).
 bool pair_bits(const std::vector<int32_t>& frame, std::size_t offset, int32_t te_short, int32_t te_long,
-               std::vector<bool>& bits) {
+               std::vector<bool>& bits, int* trailing = nullptr) {
     bits.clear();
+    if (trailing) *trailing = -1;
     const auto is_long = [&](int32_t d) {
         return std::abs(std::abs(d) - te_long) < std::abs(std::abs(d) - te_short);
     };
@@ -139,6 +141,7 @@ bool pair_bits(const std::vector<int32_t>& frame, std::size_t offset, int32_t te
         if (a == b) return false;
         bits.push_back(a);
     }
+    if (trailing && i < frame.size()) *trailing = is_long(frame[i]) ? 1 : 0;
     return static_cast<int>(bits.size()) >= kMinBits;
 }
 
@@ -303,7 +306,8 @@ Decoded decode_body(const std::vector<int32_t>& frame, uint32_t frequency_hz) {
     // de arranque; en Princeton y casi todos los demás, pulso + silencio desde el principio.
     std::vector<bool> pulse_first, silence_first, manchester;
     const std::size_t pulse_offset = frame[0] > 0 ? 0 : 1;
-    const bool pf = pair_bits(frame, pulse_offset, te_short, te_long, pulse_first);
+    int pf_trailing = -1;
+    const bool pf = pair_bits(frame, pulse_offset, te_short, te_long, pulse_first, &pf_trailing);
     const bool sf = pair_bits(frame, pulse_offset + 1, te_short, te_long, silence_first);
 
     Decoded result;
@@ -316,13 +320,16 @@ Decoded decode_body(const std::vector<int32_t>& frame, uint32_t frequency_hz) {
         if (between(te_short, 250, 420)) { result.protocol = Protocol::Came; bits = &silence_first; }
         else if (between(te_short, 550, 900)) { result.protocol = Protocol::NiceFlo; bits = &silence_first; }
     }
-    if (bits == nullptr && pf && between(ratio, 2.4, 3.6) && pulse_first.size() == 24) {
+    if (bits == nullptr && pf && between(ratio, 2.2, 3.8) && pulse_first.size() == 24) {
         result.protocol = Protocol::Princeton;
         bits = &pulse_first;
     }
     if (bits == nullptr && (pf || sf)) {
         result.protocol = Protocol::FixedCode;
         bits = pf ? &pulse_first : &silence_first;
+        // En Princeton el pulso suelto del final es el del sincronismo (ya descartado arriba); en
+        // un código fijo cualquiera es el último bit, con su silencio fundido en la pausa.
+        if (pf && pf_trailing >= 0) pulse_first.push_back(pf_trailing == 1);
     }
     if (bits == nullptr && between(ratio, 1.6, 2.5) && manchester_bits(frame, te_short, manchester)) {
         result.protocol = Protocol::Manchester;
@@ -352,6 +359,61 @@ Decoded decode_fixed(const Signal& signal) {
         if (d.ok()) return d;
     }
     return Decoded{};
+}
+
+std::vector<int32_t> deglitch(const std::vector<int32_t>& timings, int32_t min_us) {
+    std::vector<int32_t> out;
+    out.reserve(timings.size());
+    for (int32_t d : timings) {
+        if (d == 0) continue;
+        if (out.empty()) {
+            out.push_back(d);
+        } else if (std::abs(d) < min_us) {
+            out.back() += out.back() > 0 ? std::abs(d) : -std::abs(d); // el parpadeo cuenta como lo de antes
+        } else if ((d > 0) == (out.back() > 0)) {
+            out.back() += d; // mismo nivel que el anterior (tras quitar un parpadeo): es un solo tramo
+        } else {
+            out.push_back(d);
+        }
+    }
+    return out;
+}
+
+Extracted extract_best_frame(const std::vector<int32_t>& capture) {
+    Extracted best;
+    const std::vector<int32_t> clean = deglitch(capture);
+    const auto frames = split_frames(clean);
+    if (frames.empty()) {
+        best.frame = clean;
+        return best;
+    }
+
+    struct Vote { int count = 0; std::size_t first = 0; Decoded decoded; };
+    std::map<std::string, Vote> votes;
+    for (std::size_t i = 0; i < frames.size(); ++i) {
+        Signal s;
+        s.timings = frames[i];
+        const Decoded d = decode(s);
+        if (!d.ok()) continue;
+        const std::string key = std::string(protocol_name(d.protocol)) + ":" + d.code_hex;
+        Vote& v = votes[key];
+        if (v.count++ == 0) { v.first = i; v.decoded = d; }
+    }
+    const Vote* winner = nullptr;
+    for (const auto& [key, v] : votes) {
+        if (winner == nullptr || v.count > winner->count ||
+            (v.count == winner->count && v.decoded.bits > winner->decoded.bits)) {
+            winner = &v;
+        }
+    }
+    if (winner != nullptr) {
+        best.frame = frames[winner->first];
+        best.decoded = winner->decoded;
+        best.votes = winner->count;
+        return best;
+    }
+    if (const auto* f = modal_frame(frames)) best.frame = *f;
+    return best;
 }
 
 std::string describe(const Decoded& d) {

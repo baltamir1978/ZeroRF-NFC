@@ -57,8 +57,10 @@ public:
     void start_receive(uint32_t frequency_hz);
     /** Empieza a reemitir `signal` `repeats` veces. No bloquea. */
     void start_transmit(const subghz::Signal& signal, int repeats);
-    /** Para lo que esté haciendo (lo que se interrumpe es la espera). */
+    /** Para lo que esté haciendo (lo que se interrumpe es la espera). Al grabar, descarta. */
     void stop();
+    /** Al grabar: deja de escuchar y se queda con lo capturado hasta ahora (ENTER en la pantalla). */
+    void finish_receive();
 
     bool busy() const;
     Status status() const;
@@ -78,6 +80,7 @@ private:
     const bool simulated_;
     std::thread worker_;
     std::atomic<bool> stop_{false};
+    std::atomic<bool> keep_{false}; // parar la escucha quedándose con lo grabado
 
     mutable std::mutex mutex_;
     Status status_;

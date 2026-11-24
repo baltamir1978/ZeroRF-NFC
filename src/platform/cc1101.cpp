@@ -5,8 +5,11 @@
 #include "cc1101.h"
 
 #include "subghz_decode.h"
+#include "subghz_file.h"
+#include "subghz_storage.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -82,28 +85,6 @@ void busy_until(const timespec& deadline) {
              (now.tv_sec == deadline.tv_sec && now.tv_nsec < deadline.tv_nsec));
 }
 
-// De una captura larga saca UNA trama limpia (parte por silencios > 8 ms, coge la longitud modal).
-std::vector<int32_t> extract_frame(const std::vector<int32_t>& durs) {
-    std::vector<std::vector<int32_t>> frames;
-    std::vector<int32_t> cur;
-    for (int32_t d : durs) {
-        if (d < 0 && -d > 8000) {
-            if (cur.size() >= 16) frames.push_back(cur);
-            cur.clear();
-        } else if (std::abs(d) >= 60) {
-            cur.push_back(d);
-        }
-    }
-    if (cur.size() >= 16) frames.push_back(cur);
-    if (frames.empty()) return durs;
-    std::map<std::size_t, int> hist;
-    for (auto& f : frames) ++hist[f.size()];
-    std::size_t best = 0;
-    int best_n = 0;
-    for (auto& kv : hist) if (kv.second > best_n) { best_n = kv.second; best = kv.first; }
-    for (auto& f : frames) if (f.size() == best) return f;
-    return frames.front();
-}
 #endif // !USE_DESKTOP
 
 // Espera `total_us` microsegundos a cachos, mirando si han pedido parar. Devuelve false si se
@@ -149,6 +130,7 @@ void Cc1101::start_receive(uint32_t frequency_hz) {
     stop();
     join_worker();
     stop_ = false;
+    keep_ = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         status_.state = State::Receiving;
@@ -173,6 +155,11 @@ void Cc1101::start_transmit(const subghz::Signal& signal, int repeats) {
 }
 
 void Cc1101::stop() {
+    stop_ = true;
+}
+
+void Cc1101::finish_receive() {
+    keep_ = true;
     stop_ = true;
 }
 
@@ -227,10 +214,13 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
         return;
     }
 
-    // Escuchar hasta ~20 s o hasta que paren; recoger flancos.
+    // Escuchar hasta que el mismo código llegue 3 veces (el mando repite la trama mientras se
+    // pulsa: con eso basta y no hace falta esperar), hasta que paren o, como mucho, 20 s.
     std::vector<int32_t> durs;
     pollfd pfd = {req.fd, POLLIN, 0};
     auto t_end = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    auto next_check = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    std::size_t checked_size = 0;
     uint64_t prev_ns = 0;
     int prev_rising = -1;
     while (!stop_ && std::chrono::steady_clock::now() < t_end && durs.size() < 20000) {
@@ -238,6 +228,12 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             ++status_.activity;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= next_check && durs.size() != checked_size) {
+            next_check = now + std::chrono::milliseconds(400);
+            checked_size = durs.size();
+            if (subghz::extract_best_frame(durs).votes >= 3) break;
         }
         if (r <= 0) continue;
         gpio_v2_line_event ev;
@@ -256,17 +252,30 @@ void Cc1101::run_receive_device(uint32_t frequency_hz) {
     if (sw >= 0) ::close(sw);
     ::close(chip);
 
-    if (stop_) { set_state(State::Stopped); return; }
+    if (stop_ && !keep_) { set_state(State::Stopped); return; }
 
-    std::vector<int32_t> frame = extract_frame(durs);
-    if (frame.size() < 24) {
+    // La captura entera de la última grabación, aparte (no sale en la lista): para estudiar un
+    // mando que no se reconoce sin tener que volver a grabarlo.
+    {
+        subghz::Signal raw;
+        raw.frequency_hz = f;
+        raw.timings = durs;
+        const std::string dir = std::filesystem::path(subghz_dir()).parent_path() / "subghz-raw";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        std::string err;
+        if (!raw.timings.empty()) subghz::save_sub_file(dir + "/last-capture.sub", raw, err);
+    }
+
+    const subghz::Extracted best = subghz::extract_best_frame(durs);
+    if (best.frame.size() < 24) {
         set_state(State::Stopped);  // no llegó nada reconocible
         return;
     }
     subghz::Signal sig;
     sig.frequency_hz = f;
     sig.modulation = subghz::Modulation::Ook;
-    sig.timings = std::move(frame);
+    sig.timings = best.frame;
     std::lock_guard<std::mutex> lock(mutex_);
     captured_ = std::move(sig);
     status_.state = State::Received;

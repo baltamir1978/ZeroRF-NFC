@@ -224,7 +224,8 @@ bool SubGhzScreen::handle_key(uint32_t key) {
     }
     if (mode_ != Mode::List) {
         if (key == LV_KEY_ENTER || key == '\r' || key == ' ') {
-            radio_.stop();
+            // Grabando: parar y quedarse con lo que haya llegado (ESC es lo que cancela).
+            if (mode_ == Mode::Receiving) radio_.finish_receive(); else radio_.stop();
             return true;
         }
         return false;
@@ -306,7 +307,7 @@ void SubGhzScreen::poll() {
         if (status.state == State::Received) {
             on_received();
         } else if (status.state == State::Stopped || status.state == State::Failed) {
-            status_line_ = status.state == State::Failed ? ("No radio: " + status.error) : "Cancelled";
+            status_line_ = status.state == State::Failed ? ("No radio: " + status.error) : "Nothing recorded";
             mode_ = Mode::List;
         }
     } else if (mode_ == Mode::Transmitting) {
@@ -385,7 +386,8 @@ void SubGhzScreen::refresh() {
         lv_label_set_text(detail_, detail);
         lv_obj_set_style_text_color(headline_, colors.primary, 0);
         lv_obj_set_style_text_color(detail_, colors.text, 0);
-        lv_label_set_text(hint_, "ENTER / ESC  stop");
+        lv_label_set_text(hint_, mode_ == Mode::Receiving ? "Press the remote   ENTER done   ESC cancel"
+                                                          : "ENTER / ESC  stop");
     }
 
     lv_obj_set_style_text_color(hint_, colors.text_disabled, 0);

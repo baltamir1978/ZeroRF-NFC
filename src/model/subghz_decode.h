@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace subghz {
 
@@ -53,6 +54,28 @@ Decoded decode(const Signal& signal);
  * `decode` después de probar Princeton; está aparte para las pruebas.
  */
 Decoded decode_fixed(const Signal& signal);
+
+/**
+ * Limpia los parpadeos del receptor: un tramo de menos de `min_us` se suma al anterior (un hueco
+ * de 30 µs dentro de un pulso de 540 no son tres tramos) y dos tramos seguidos del mismo signo se
+ * juntan. Sin esto, un solo parpadeo rompe el emparejamiento de toda una trama.
+ */
+std::vector<int32_t> deglitch(const std::vector<int32_t>& timings, int32_t min_us = 80);
+
+/** La trama elegida de una captura larga, lo que dice y cuántas repeticiones lo dijeron. */
+struct Extracted {
+    std::vector<int32_t> frame;
+    Decoded decoded;
+    int votes = 0; // repeticiones de la captura con el mismo código (0 = no se reconoció)
+};
+
+/**
+ * De una captura larga (con ruido antes y después de pulsar el mando) saca UNA trama para guardar
+ * y reemitir: limpia parpadeos, parte por las pausas (> 8 ms), decodifica cada repetición y gana
+ * el código que más se repite (las del principio y el final suelen salir cortadas o con ruido).
+ * Si ninguna se reconoce, la trama de la longitud más repetida, como antes.
+ */
+Extracted extract_best_frame(const std::vector<int32_t>& capture);
 
 /** "Princeton 24 bit · 0x5A3C1F · Te 350 µs" — una línea para enseñar en la pantalla. */
 std::string describe(const Decoded& decoded);

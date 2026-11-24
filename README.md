@@ -46,11 +46,13 @@ map and status.
 
 ## Status
 
-**0.5.4 — remotes are recognised, cards can be written.**
+**0.5.5 — remotes are recognised, cards can be written.**
 
 - Sub-GHz: a recorded remote is identified by its shape — Princeton/EV1527, CAME, NICE FLO, any
   other two-width fixed code (shown as "Fixed code N bit" with its code, also after a preamble of
-  other widths) or Manchester. Recordings are named
+  other widths) or Manchester. Listening stops as soon as the same code has arrived three times
+  (ENTER stops and keeps what was recorded); the frame kept is the code most repetitions agree on.
+  Recordings are named
   after it (`CAME-5A3`, `FIX77-9C2E`…) and the list shows what each saved signal is. Replay is
   still the raw recording.
 - NFC: **W** on a saved NTAG/Ultralight writes it to a blank tag. Only the user memory is

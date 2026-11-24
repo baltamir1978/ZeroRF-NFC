@@ -194,6 +194,65 @@ void test_manchester() {
     CHECK(subghz::suggested_name(d, s.timings.size()) == "MAN32-F00F");
 }
 
+// Una captura como las del aparato: ruido del receptor antes y después, y el mando (cabecera +
+// 95 bits 1:2, como el del garaje) repetido seis veces, la primera cortada y dos con un parpadeo
+// de 30 µs dentro de un pulso. Tiene que salir el código del mando, votado por las repeticiones.
+void test_extract_from_noisy_capture() {
+    const int32_t te = 270;
+    std::vector<int32_t> frame = {2 * te, -2 * te, 3 * te, -3 * te, 2 * te, -2 * te, te, -te};
+    std::vector<bool> code;
+    uint32_t lfsr = 0x1D2Bu;
+    for (int i = 0; i < 95; ++i) { lfsr = (lfsr >> 1) ^ (-(lfsr & 1u) & 0xB400u); code.push_back(lfsr & 1u); }
+    for (bool c : code) { frame.push_back(c ? 2 * te : te); frame.push_back(c ? -te : -2 * te); }
+
+    std::vector<int32_t> capture;
+    uint32_t rnd = 12345u;
+    auto noise = [&](int n) {
+        for (int i = 0; i < n; ++i) {
+            rnd = rnd * 1103515245u + 12345u;
+            const int32_t d = 20 + static_cast<int32_t>((rnd >> 8) % 2500);
+            capture.push_back(i % 2 == 0 ? d : -d);
+        }
+    };
+    noise(301);
+    capture.push_back(-12000);
+    for (int r = 0; r < 6; ++r) {
+        std::vector<int32_t> f = frame;
+        if (r == 0) f.erase(f.begin(), f.begin() + 60);       // empezó a grabar a media trama
+        if (r == 2 || r == 4) {                                // parpadeo dentro del pulso 20
+            const int32_t whole = f[20];
+            f[20] = whole / 2;
+            f.insert(f.begin() + 21, {-30, whole - whole / 2 - 30});
+        }
+        capture.insert(capture.end(), f.begin(), f.end());
+        capture.push_back(-11000);
+    }
+    noise(400);
+
+    const subghz::Extracted e = subghz::extract_best_frame(capture);
+    CHECK(e.votes >= 5);
+    CHECK(e.decoded.protocol == subghz::Protocol::FixedCode);
+    CHECK(e.decoded.bits == 95);
+    uint64_t low = 0;
+    for (int i = 95 - 64; i < 95; ++i) low = (low << 1) | (code[i] ? 1 : 0);
+    CHECK(e.decoded.key == low);
+    // La trama guardada se decodifica sola igual (es lo que se reemite y lo que lee la lista).
+    subghz::Signal saved;
+    saved.timings = e.frame;
+    CHECK(subghz::decode(saved).code_hex == e.decoded.code_hex);
+
+    // Sólo ruido: no se inventa un mando.
+    capture.clear();
+    noise(2000);
+    CHECK(subghz::extract_best_frame(capture).votes == 0);
+}
+
+void test_deglitch() {
+    CHECK((subghz::deglitch({250, -30, 260, -540}) == std::vector<int32_t>{540, -540}));
+    CHECK((subghz::deglitch({300, 300, -100}) == std::vector<int32_t>{600, -100}));
+    CHECK((subghz::deglitch({-40, 500}) == std::vector<int32_t>{-40, 500}));
+}
+
 } // namespace
 
 int main() {
@@ -206,6 +265,8 @@ int main() {
     test_rejects_three_widths();
     test_header_skipped();
     test_manchester();
+    test_extract_from_noisy_capture();
+    test_deglitch();
     if (failures == 0) {
         std::printf("subghz_decode_test: OK\n");
     }
