@@ -112,6 +112,11 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
   0-31, la parte cifrada; `Decoded::hop`): si dos grabaciones del mismo mando dan el mismo hop, el
   mando repite siempre la trama. **Ni códigos ni números de serie de los mandos de Bruno en este
   repositorio (es público)**: lo concreto de sus pruebas va en la memoria local de Claude.
+  - **Confirmado por Bruno en el aparato (24-nov-2026):** grabar para solo en cuanto oye el mismo
+    código 3 veces («en cuanto graba bien para»); tres grabaciones seguidas del mismo mando salen
+    como KeeLoq con la misma serie y botón y **hop distinto en cada una** (código variable de
+    verdad), y una grabación KeeLoq que el receptor no había oído fue aceptada al reemitirla. Lo
+    esperable, pues: cada grabación vale como mucho una vez y caduca al usar el mando real.
 
 - **0.5.6 (24-nov-2026) — la grabación de la calle era un KeeLoq; progreso al grabar.** Instalada
   en cpzero. La grabación de Bruno volviendo a casa (`RAW-155.sub`, hecha con la 0.5.4) **no es el
