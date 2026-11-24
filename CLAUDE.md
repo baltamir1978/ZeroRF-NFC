@@ -106,6 +106,39 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 
 ## Estado
 
+- **0.5.0 (24-nov-2026) — mandos reconocidos y escribir tarjetas.** Lo pidió Bruno («sigue
+  trabajando lo que puedas»), con el aparato apagado: todo probado en el simulador y en ctest;
+  **sin probar en el aparato** (`.deb` en `~/Documentos/Software/ZeroRF-NFC-0.5.0.deb`, sin instalar).
+  - **Sub-GHz: qué mando es.** `subghz::decode_fixed` (`src/model/subghz_decode.*`) analiza la
+    forma sin suponer marca: parte la captura por las pausas (> 8 ms), coge la trama más repetida,
+    exige dos anchos (corto y largo, proporción 1,5-4,5) y prueba los dos emparejamientos (pulso +
+    silencio desde el principio, o silencio + pulso tras un pulso de arranque); bit 1 = el primero
+    del par es el largo. Con eso reconoce **CAME** (Te ≈ 320 µs, 1:2, 12/24 bits) y **NICE FLO**
+    (Te ≈ 700 µs), y lo demás de forma reconocible sale como **«Fixed code N bit»** con su código
+    en hex (también > 64 bits: `code_hex`), como el mando del garaje de Bruno (1:2, ~77 bits).
+    **Arreglado de paso:** el buscador de Princeton aceptaba un mando 1:2 como 1:3 (su ±40 % deja
+    pasar 2·Te por 3·Te) y daba 24 bits inventados; ahora manda el análisis de forma si dice otra
+    cosa. Al grabar, el nombre sale de `suggested_name` (`PT-…`, `CAME-…`, `NICE-…`, `FIX77-9C2E`,
+    `RAW-n`) y la línea de estado dice lo reconocido; con una señal guardada seleccionada, la línea
+    de abajo enseña protocolo, bits, código y tiempos (`describe`, leído una vez por señal).
+    Reemitir sigue siendo en crudo: lo decodificado es información, no cambia lo que se emite.
+  - **NFC: escribir una tarjeta guardada** en una NTAG/Ultralight (tecla **W** en el detalle).
+    `src/model/nfc_type2.*`: disposición de cada modelo por el byte 6 de GET_VERSION (Ultralight,
+    UL EV1 11/21, NTAG210/212/213/215/216) y `plan_type2_write`, que **sólo escribe memoria de
+    usuario** (desde la página 4 hasta la última de usuario): ni UID/CC (0-3), ni bloqueo dinámico,
+    configuración, contraseña o PACK del final, que copiados de un volcado pueden **bloquear la
+    etiqueta para siempre** o ponerle contraseña (la contraseña se lee como ceros). Si el destino
+    es más pequeño sólo vale si lo que no cabe está a cero (una NDEF corta de una 215 cabe en una
+    213). `NfcSt25r3916::start_write` (estados `Writing`/`Written`, resumen en `Status::message`)
+    espera la etiqueta, lee su GET_VERSION y su bloqueo estático (página 2; con bits puestos no
+    escribe), escribe y **relee para verificar**. El CLI `zeronfc load` sigue escribiendo todo lo
+    que le den (es la herramienta de diagnóstico).
+  - Pruebas: 8 ejecutables de ctest (nuevos: CAME/NICE, código fijo genérico con ruido y trama
+    cortada, nombres, rechazo de tres anchos; `nfc_type2_test`: disposiciones, mismo modelo,
+    destino menor/mayor, bloqueo).
+  - **Falta en el aparato:** instalar la 0.5.0; ver qué dice de los mandos guardados (el del garaje
+    debería salir como «Fixed code 77 bit»); escribir una NTAG con W (mejor una de usar y tirar).
+
 - **0.4.0 (23-nov-2026) — Sub-GHz COMPLETO en la app (captura + reemisión reales) + renombrar.**
   `platform::Cc1101` ya habla con el radio en el aparato (antes era sim/stub): `run_receive_device`
   (preset Ook650, RF_SW0=GPIO14=1, captura los flancos de GDO0=GPIO15 con GPIO v2, extrae una trama

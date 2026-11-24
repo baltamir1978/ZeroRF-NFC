@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 namespace {
@@ -67,12 +68,93 @@ void test_rejects_noise() {
     CHECK(!decoded.ok());
 }
 
+
+// CAME y NICE FLO: mismo formato con distinto tiempo base; 12 y 24 bits.
+void test_came_and_nice() {
+    struct Case { uint32_t te; subghz::Protocol p; const char* prefix; };
+    const Case cases[] = {{320, subghz::Protocol::Came, "CAME-"}, {700, subghz::Protocol::NiceFlo, "NICE-"}};
+    for (const Case& c : cases) {
+        for (uint8_t bits : {uint8_t(12), uint8_t(24)}) {
+            const uint64_t key = bits == 12 ? 0x5A3ULL : 0xC0FFEEULL;
+            const subghz::Signal s = subghz::encode_came_like(key, bits, c.te, 433920000, 4);
+            const subghz::Decoded d = subghz::decode(s);
+            CHECK(d.protocol == c.p);
+            CHECK(d.bits == bits);
+            CHECK(d.key == key);
+            CHECK(d.te_us == c.te);
+            CHECK(d.te_long_us == c.te * 2);
+            CHECK(subghz::suggested_name(d, s.timings.size()) == std::string(c.prefix) + d.code_hex);
+        }
+    }
+    const subghz::Decoded d = subghz::decode(subghz::encode_came_like(0x5A3, 12, 320, 433920000, 3));
+    CHECK(d.code_hex == "5A3");
+    CHECK(subghz::describe(d) == "CAME 12 bit  0x5A3  Te 320 us");
+}
+
+// Un mando como el del garaje de Bruno: proporción 1:2, pulso + silencio, 77 bits, tramas
+// separadas por pausas largas, con una trama cortada al principio de la captura (como pasa al
+// empezar a grabar a media pulsación). No es de ninguna marca conocida: sale como código fijo.
+void test_generic_fixed_code() {
+    std::vector<bool> code;
+    uint32_t lfsr = 0xACE1u;
+    for (int i = 0; i < 77; ++i) { lfsr = (lfsr >> 1) ^ (-(lfsr & 1u) & 0xB400u); code.push_back(lfsr & 1u); }
+    const int32_t te = 400, tl = 800;
+    subghz::Signal s;
+    // Trama cortada (sólo los últimos 10 bits).
+    for (int i = 67; i < 77; ++i) { s.timings.push_back(code[i] ? tl : te); s.timings.push_back(code[i] ? -te : -tl); }
+    for (int r = 0; r < 5; ++r) {
+        s.timings.push_back(-12000);
+        for (int i = 0; i < 77; ++i) {
+            // Algo de ruido determinista (±10 %), como un oscilador RC.
+            const double f = (i % 3 == 0) ? 1.1 : (i % 3 == 1 ? 0.92 : 1.0);
+            s.timings.push_back(static_cast<int32_t>((code[i] ? tl : te) * f));
+            s.timings.push_back(-static_cast<int32_t>((code[i] ? te : tl) * f));
+        }
+    }
+    const subghz::Decoded d = subghz::decode(s);
+    CHECK(d.protocol == subghz::Protocol::FixedCode);
+    CHECK(d.bits == 77);
+    CHECK(d.code_hex.size() == 20); // 77 bits = 20 dígitos (3 bits de relleno a la izquierda)
+    uint64_t low = 0;
+    for (int i = 77 - 64; i < 77; ++i) low = (low << 1) | (code[i] ? 1 : 0);
+    CHECK(d.key == low);
+    CHECK(d.te_us >= 380 && d.te_us <= 420);
+    CHECK(d.te_long_us >= 760 && d.te_long_us <= 840);
+    const std::string name = subghz::suggested_name(d, s.timings.size());
+    CHECK(name.rfind("FIX77-", 0) == 0 && name.size() == 10);
+}
+
+// Princeton con un Te raro sigue siendo Princeton; y un nombre RAW para lo irreconocible.
+void test_names() {
+    const subghz::Signal p = subghz::encode_princeton(0xABC123ULL, 24, 350, 433920000, 3);
+    const subghz::Decoded d = subghz::decode(p);
+    CHECK(subghz::suggested_name(d, p.timings.size()) == "PT-ABC123");
+    CHECK(d.code_hex == "ABC123");
+    CHECK(d.te_long_us == 1050);
+    CHECK(subghz::suggested_name(subghz::Decoded{}, 42) == "RAW-42");
+    CHECK(subghz::describe(subghz::Decoded{}) == "Raw signal (unknown format)");
+}
+
+// Tres anchos distintos (no es código de dos anchos): no se inventa bits.
+void test_rejects_three_widths() {
+    subghz::Signal s;
+    for (int r = 0; r < 3; ++r) {
+        s.timings.push_back(-15000);
+        for (int i = 0; i < 20; ++i) { s.timings.push_back(300 + (i % 3) * 500); s.timings.push_back(-(300 + ((i + 1) % 3) * 500)); }
+    }
+    CHECK(!subghz::decode(s).ok());
+}
+
 } // namespace
 
 int main() {
     test_round_trip();
     test_jitter();
     test_rejects_noise();
+    test_came_and_nice();
+    test_generic_fixed_code();
+    test_names();
+    test_rejects_three_widths();
     if (failures == 0) {
         std::printf("subghz_decode_test: OK\n");
     }

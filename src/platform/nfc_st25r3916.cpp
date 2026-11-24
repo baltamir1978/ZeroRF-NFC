@@ -4,6 +4,7 @@
 
 #include "nfc_st25r3916.h"
 
+#include "nfc_type2.h"
 #include "st25/cap_power.h"
 #include "st25/st25r3916.h"
 
@@ -190,13 +191,27 @@ void NfcSt25r3916::start_emulate(const nfc::Card& card) {
     worker_ = std::thread(&NfcSt25r3916::run_emulate, this, card);
 }
 
+void NfcSt25r3916::start_write(const nfc::Card& card) {
+    stop();
+    join_worker();
+    stop_ = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.state = State::Writing;
+        status_.activity = 0;
+        status_.error.clear();
+        status_.message.clear();
+    }
+    worker_ = std::thread(&NfcSt25r3916::run_write, this, card);
+}
+
 void NfcSt25r3916::stop() {
     stop_ = true;
 }
 
 bool NfcSt25r3916::busy() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return status_.state == State::Scanning || status_.state == State::Emulating;
+    return status_.state == State::Scanning || status_.state == State::Emulating || status_.state == State::Writing;
 }
 
 NfcSt25r3916::Status NfcSt25r3916::status() const {
@@ -349,6 +364,153 @@ void NfcSt25r3916::run_emulate_device(const nfc::Card& card) {
         return;
     }
     set_state(State::Stopped);
+}
+
+void NfcSt25r3916::run_write(nfc::Card card) {
+    if (!simulated_) {
+        run_write_device(card);
+        return;
+    }
+    // Simulado: «aparece» una NTAG215 en blanco al cabo de un momento y se escribe.
+    for (int i = 0; i < 40; ++i) {
+        if (stop_) {
+            set_state(State::Stopped);
+            return;
+        }
+        sleep_ms(25);
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.activity = static_cast<std::size_t>(i);
+    }
+    const nfc::Type2Layout target = nfc::type2_layout({0x00, 0x04, 0x04, 0x02, 0x01, 0x00, 0x11, 0x03}, 0);
+    const nfc::Type2WritePlan plan = nfc::plan_type2_write(card, target);
+    if (!plan.ok()) {
+        set_state(State::Failed, plan.error);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    status_.state = State::Written;
+    status_.message = "Wrote " + std::to_string(plan.pages.size()) + " pages to " + target.name;
+}
+
+void NfcSt25r3916::run_write_device(const nfc::Card& card) {
+    if (card.block_size != 4 || card.memory.empty()) {
+        set_state(State::Failed, "Only NTAG/Ultralight cards can be written");
+        return;
+    }
+    CapPower power;
+    if (!power.power_on_nfc()) {
+        set_state(State::Failed, power.error());
+        return;
+    }
+    st25::St25r3916 chip;
+    if (!chip.open(CapPower::kNfcSpiDevice)) {
+        set_state(State::Failed, "Cannot open the NFC SPI");
+        return;
+    }
+    const st25::InitStatus init = chip.init();
+    if (!init.ok) {
+        set_state(State::Failed, "NFC chip init failed: " + init.error);
+        return;
+    }
+
+    // Esperar la etiqueta de destino.
+    st25::PiccA picc;
+    while (!stop_ && !select_once(chip, picc)) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++status_.activity;
+        }
+        sleep_ms(50);
+    }
+    if (stop_) {
+        chip.fieldOff();
+        set_state(State::Stopped);
+        return;
+    }
+    if ((picc.sak & 0x7F) != 0x00) {
+        chip.fieldOff();
+        set_state(State::Failed, "Not an NTAG/Ultralight tag");
+        return;
+    }
+
+    // Qué modelo es (GET_VERSION; si no lo entiende se calla y hay que volver a seleccionarla).
+    std::vector<uint8_t> version;
+    uint8_t ver[16];
+    int vlen = 0;
+    if (chip.type2GetVersion(ver, vlen) && vlen >= 8) {
+        version.assign(ver, ver + vlen);
+    }
+    if (!select_once(chip, picc)) {
+        chip.fieldOff();
+        set_state(State::Failed, "Tag moved away");
+        return;
+    }
+    // Sin GET_VERSION: Ultralight original (16 páginas) si al leer la 16 «da la vuelta» a la 0.
+    uint8_t head[16];
+    if (!chip.type2Read(0, head)) {
+        chip.fieldOff();
+        set_state(State::Failed, "Can't read the tag");
+        return;
+    }
+    std::size_t pages_hint = 0;
+    if (version.empty()) {
+        uint8_t wrap[16];
+        if (chip.type2Read(16, wrap) && std::memcmp(wrap, head, 16) == 0) pages_hint = 16;
+    }
+    const nfc::Type2Layout target = nfc::type2_layout(version, pages_hint);
+    if (nfc::type2_static_locked({head[8], head[9], head[10], head[11]})) {
+        chip.fieldOff();
+        set_state(State::Failed, "Tag is locked (read-only pages)");
+        return;
+    }
+    const nfc::Type2WritePlan plan = nfc::plan_type2_write(card, target);
+    if (!plan.ok()) {
+        chip.fieldOff();
+        set_state(State::Failed, plan.error);
+        return;
+    }
+
+    int written = 0;
+    for (const auto& [page, data] : plan.pages) {
+        if (stop_) break;
+        if (!chip.type2Write(static_cast<uint8_t>(page), data.data())) {
+            chip.fieldOff();
+            set_state(State::Failed, "Write failed at page " + std::to_string(page) + " (" + std::to_string(written) +
+                                         " written)");
+            return;
+        }
+        ++written;
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.activity = static_cast<std::size_t>(written);
+    }
+    if (stop_) {
+        chip.fieldOff();
+        set_state(State::Failed, "Stopped after " + std::to_string(written) + " pages: tag left half written");
+        return;
+    }
+
+    // Releer y comparar (READ da 4 páginas de golpe).
+    for (std::size_t i = 0; i < plan.pages.size(); i += 4) {
+        uint8_t rd[16];
+        const int first = plan.pages[i].first;
+        if (!chip.type2Read(static_cast<uint8_t>(first), rd)) {
+            chip.fieldOff();
+            set_state(State::Failed, "Written, but can't read it back");
+            return;
+        }
+        for (std::size_t k = 0; k < 4 && i + k < plan.pages.size(); ++k) {
+            if (std::memcmp(rd + k * 4, plan.pages[i + k].second.data(), 4) != 0) {
+                chip.fieldOff();
+                set_state(State::Failed, "Verify failed at page " + std::to_string(plan.pages[i + k].first));
+                return;
+            }
+        }
+    }
+    chip.fieldOff();
+    std::lock_guard<std::mutex> lock(mutex_);
+    status_.state = State::Written;
+    status_.message = "Wrote " + std::to_string(written) + " pages to " +
+                      (target.name.empty() ? std::string("the tag") : target.name);
 }
 
 } // namespace platform

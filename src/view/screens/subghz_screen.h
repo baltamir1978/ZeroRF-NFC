@@ -8,6 +8,7 @@
 #include "cc1101.h"
 
 #include <array>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,8 @@ private:
     void start_rename();
     void finish_rename();
     void on_received();
+    /** Qué es la señal seleccionada (protocolo, bits, código), leída una vez y guardada. */
+    const std::string& selected_info();
 
     static void poll_timer_cb(lv_timer_t* timer);
 
@@ -58,6 +61,7 @@ private:
     std::string tx_name_;
     std::string rename_buffer_;
     std::string rename_from_;
+    std::map<std::string, std::string> info_cache_;
 
     std::array<lv_obj_t*, kVisibleRows> rows_{};
     std::array<lv_obj_t*, kVisibleRows> row_labels_{};

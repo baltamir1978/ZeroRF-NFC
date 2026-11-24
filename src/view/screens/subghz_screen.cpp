@@ -107,6 +107,7 @@ int SubGhzScreen::item_count() const {
 
 void SubGhzScreen::reload_signals() {
     names_ = platform::list_signals();
+    info_cache_.clear();
     selection_ = std::clamp(selection_, 0, item_count() - 1);
     ensure_visible();
 }
@@ -189,13 +190,7 @@ void SubGhzScreen::on_received() {
     const subghz::Signal signal = radio_.captured();
     const subghz::Decoded decoded = subghz::decode(signal);
 
-    char base[32];
-    if (decoded.ok()) {
-        std::snprintf(base, sizeof(base), "PT-%06llX", static_cast<unsigned long long>(decoded.key));
-    } else {
-        std::snprintf(base, sizeof(base), "RAW-%u", static_cast<unsigned>(signal.timings.size()));
-    }
-    const std::string name = platform::unique_signal_name(base);
+    const std::string name = platform::unique_signal_name(subghz::suggested_name(decoded, signal.timings.size()));
 
     std::string error;
     if (!subghz::save_sub_file(platform::signal_path(name), signal, error)) {
@@ -213,11 +208,7 @@ void SubGhzScreen::on_received() {
         }
     }
     ensure_visible();
-    if (decoded.ok()) {
-        status_line_ = "Saved " + name + "  (" + subghz::protocol_name(decoded.protocol) + ")";
-    } else {
-        status_line_ = "Saved " + name + "  (raw)";
-    }
+    status_line_ = "Saved: " + subghz::describe(decoded);
     mode_ = Mode::List;
 }
 
@@ -248,6 +239,7 @@ bool SubGhzScreen::handle_key(uint32_t key) {
         case 'Z':
             if (selection_ > 0) {
                 --selection_;
+                status_line_.clear();
                 ensure_visible();
                 refresh();
             }
@@ -260,6 +252,7 @@ bool SubGhzScreen::handle_key(uint32_t key) {
         case 'C':
             if (selection_ < item_count() - 1) {
                 ++selection_;
+                status_line_.clear();
                 ensure_visible();
                 refresh();
             }
@@ -367,8 +360,10 @@ void SubGhzScreen::refresh() {
         lv_obj_add_flag(headline_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(detail_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(status_label_, status_line_.c_str());
-        lv_obj_set_style_text_color(status_label_, colors.success, 0);
+        // Lo último que pasó (guardado, enviado…) y, si no, qué es la señal seleccionada.
+        const bool info = status_line_.empty() && selection_ > 0;
+        lv_label_set_text(status_label_, info ? selected_info().c_str() : status_line_.c_str());
+        lv_obj_set_style_text_color(status_label_, info ? colors.text_disabled : colors.success, 0);
         lv_label_set_text(hint_,
                           selection_ == 0 ? "ENTER record      F / X move"
                                           : "ENTER replay   R rename   D delete");
@@ -394,6 +389,24 @@ void SubGhzScreen::refresh() {
     }
 
     lv_obj_set_style_text_color(hint_, colors.text_disabled, 0);
+}
+
+const std::string& SubGhzScreen::selected_info() {
+    static const std::string empty;
+    if (selection_ <= 0 || selection_ - 1 >= static_cast<int>(names_.size())) {
+        return empty;
+    }
+    const std::string& name = names_[selection_ - 1];
+    auto it = info_cache_.find(name);
+    if (it == info_cache_.end()) {
+        subghz::Signal signal;
+        std::string error;
+        const std::string text = subghz::load_sub_file(platform::signal_path(name), signal, error)
+                                     ? subghz::describe(subghz::decode(signal))
+                                     : "Can't read: " + error;
+        it = info_cache_.emplace(name, text).first;
+    }
+    return it->second;
 }
 
 void SubGhzScreen::poll_timer_cb(lv_timer_t* timer) {

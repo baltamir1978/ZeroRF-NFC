@@ -9,7 +9,7 @@ built for the **Cap CC1101+NFC** expansion module. In the launcher it shows up a
 
 - **Sub-GHz (433 MHz)** — record a 433 MHz remote (such as a garage opener), save it, and replay
   it, using the on-cap TI **CC1101** radio.
-- **NFC (13.56 MHz)** — read, write and emulate 13.56 MHz cards, using the **ST25R3916** reader.
+- **NFC (13.56 MHz)** — read, save, write (NTAG/Ultralight) and emulate 13.56 MHz cards, using the **ST25R3916** reader.
 
 > **Fixed vs. rolling code.** Replaying a recorded remote works for **fixed-code** remotes
 > (PT2262 and the like). Modern **rolling-code** remotes (KeeLoq) change their code every press
@@ -45,6 +45,18 @@ rail is enabled through `/sys/class/leds/ext_5v_out/brightness`. See `CLAUDE.md`
 map and status.
 
 ## Status
+
+**0.5.0 — remotes are recognised, cards can be written.**
+
+- Sub-GHz: a recorded remote is identified by its shape — Princeton/EV1527, CAME, NICE FLO, or
+  any other two-width fixed code (shown as "Fixed code N bit" with its code). Recordings are named
+  after it (`CAME-5A3`, `FIX77-9C2E`…) and the list shows what each saved signal is. Replay is
+  still the raw recording.
+- NFC: **W** on a saved NTAG/Ultralight writes it to a blank tag. Only the user memory is
+  written (never the UID, lock, configuration or password pages, which could lock the tag for
+  good); the target model and its lock bits are checked first and everything is read back.
+
+New in 0.5.0 is tested in the simulator; not yet on the device.
 
 **0.4.0 — both tools talk to the real hardware on the Cardputer.**
 

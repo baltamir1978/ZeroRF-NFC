@@ -30,7 +30,7 @@ protected:
     void build_content(lv_obj_t* content) override;
 
 private:
-    enum class Mode { List, Scanning, Detail, Emulating, Rename };
+    enum class Mode { List, Scanning, Detail, Emulating, Writing, Rename };
 
     bool handle_key(uint32_t key);
     bool handle_back();
@@ -43,6 +43,7 @@ private:
     void start_scan();
     void open_selected();
     void start_emulate();
+    void start_write();
     void delete_current();
     void start_rename();
     void finish_rename();

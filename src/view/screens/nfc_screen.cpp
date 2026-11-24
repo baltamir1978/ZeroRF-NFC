@@ -187,6 +187,16 @@ void NfcScreen::start_emulate() {
     reader_.start_emulate(current_card_);
 }
 
+void NfcScreen::start_write() {
+    if (current_card_.block_size != 4 || current_card_.memory.empty()) {
+        status_line_ = "Only NTAG/Ultralight cards can be written";
+        return;
+    }
+    status_line_.clear();
+    mode_ = Mode::Writing;
+    reader_.start_write(current_card_);
+}
+
 void NfcScreen::delete_current() {
     if (current_name_.empty()) {
         return;
@@ -259,7 +269,7 @@ void NfcScreen::on_found() {
 }
 
 bool NfcScreen::handle_key(uint32_t key) {
-    if (mode_ == Mode::Scanning || mode_ == Mode::Emulating) {
+    if (mode_ == Mode::Scanning || mode_ == Mode::Emulating || mode_ == Mode::Writing) {
         if (key == LV_KEY_ENTER || key == '\r' || key == ' ') {
             reader_.stop();
             return true;
@@ -294,6 +304,11 @@ bool NfcScreen::handle_key(uint32_t key) {
             case 'd':
             case 'D':
                 delete_current();
+                refresh();
+                return true;
+            case 'w':
+            case 'W':
+                start_write();
                 refresh();
                 return true;
             default:
@@ -359,6 +374,7 @@ bool NfcScreen::handle_back() {
             refresh();
             return true;
         case Mode::Emulating:
+        case Mode::Writing:
             reader_.stop();
             mode_ = Mode::Detail;
             refresh();
@@ -385,6 +401,16 @@ void NfcScreen::poll() {
         } else if (status.state == State::Stopped || status.state == State::Failed) {
             status_line_ = status.state == State::Failed ? ("No reader: " + status.error) : "Cancelled";
             mode_ = Mode::List;
+        }
+    } else if (mode_ == Mode::Writing) {
+        if (status.state == State::Written) {
+            status_line_ = status.message;
+            mode_ = Mode::Detail;
+        } else if (status.state == State::Failed) {
+            status_line_ = "Write failed: " + status.error;
+            mode_ = Mode::Detail;
+        } else if (status.state == State::Stopped) {
+            mode_ = Mode::Detail;
         }
     } else if (mode_ == Mode::Emulating) {
         if (status.state == State::Stopped) {
@@ -461,9 +487,12 @@ void NfcScreen::refresh() {
         lv_obj_set_style_text_color(line3_, colors.text, 0);
         // En el detalle no hay sitio para otra línea: el aviso («Saved…», «Renamed») ocupa la
         // de ayuda hasta la siguiente tecla.
-        lv_label_set_text(hint_, status_line_.empty() ? "ENTER emulate    R rename    D delete"
+        lv_label_set_text(hint_, status_line_.empty() ? "ENTER emulate  W write  R rename  D delete"
                                                       : status_line_.c_str());
-        lv_obj_set_style_text_color(hint_, status_line_.empty() ? colors.text_disabled : colors.success, 0);
+        const bool failed = status_line_.rfind("Write failed", 0) == 0 || status_line_.rfind("Only ", 0) == 0;
+        lv_obj_set_style_text_color(hint_, status_line_.empty() ? colors.text_disabled
+                                           : failed           ? colors.error
+                                                              : colors.success, 0);
         return;
     } else if (mode_ == Mode::Rename) {
         show(line1_, true);
@@ -479,7 +508,7 @@ void NfcScreen::refresh() {
         lv_obj_set_style_text_color(line1_, colors.text, 0);
         lv_obj_set_style_text_color(line2_, colors.text_disabled, 0);
         lv_label_set_text(hint_, "ENTER save     DEL erase     ESC cancel");
-    } else { // Scanning / Emulating
+    } else { // Scanning / Emulating / Writing
         show(line1_, true);
         show(line2_, false);
         show(line3_, false);
@@ -488,6 +517,9 @@ void NfcScreen::refresh() {
         if (mode_ == Mode::Scanning) {
             lv_label_set_text(headline_, reader_.is_simulated() ? "Searching (sim)" : "Searching");
             lv_label_set_text(line1_, "Hold a card near the cap");
+        } else if (mode_ == Mode::Writing) {
+            lv_label_set_text(headline_, reader_.is_simulated() ? "Writing (sim)" : "Writing");
+            lv_label_set_text(line1_, "Hold a blank NTAG near the cap");
         } else {
             lv_label_set_text(headline_, reader_.is_simulated() ? "Emulating (sim)" : "Emulating");
             lv_label_set_text(line1_, current_name_.c_str());

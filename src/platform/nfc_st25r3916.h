@@ -14,7 +14,7 @@
 namespace platform {
 
 /**
- * El lector NFC del Cap (ST25R3916, 13.56 MHz). Escanea una tarjeta y la emula, en un hilo
+ * El lector NFC del Cap (ST25R3916, 13.56 MHz). Escanea, emula y escribe tarjetas, en un hilo
  * aparte, como `Cc1101`. En el simulador (y con `ZERORFNFC_NFC=sim` en el aparato) usa un
  * backend **simulado** que «encuentra» una NTAG con un NDEF dentro, para probar la interfaz.
  * En el aparato usa el driver de `st25/` por `/dev/spidev0.2` (CS2 = GPIO22), con el cap
@@ -27,6 +27,8 @@ public:
         Scanning,
         Found, // hay una tarjeta leída en `scanned()`
         Emulating,
+        Writing,
+        Written, // escritura acabada y verificada; el resumen va en `message`
         Stopped,
         Failed,
     };
@@ -36,6 +38,7 @@ public:
         bool simulated = false;
         std::size_t activity = 0;
         std::string error;
+        std::string message; // resultado de una escritura ("Wrote 126 pages to NTAG215")
     };
 
     NfcSt25r3916();
@@ -50,6 +53,12 @@ public:
 
     void start_scan();
     void start_emulate(const nfc::Card& card);
+    /**
+     * Espera una etiqueta NTAG/Ultralight y le escribe la memoria de usuario de `card` (sólo
+     * eso: ni UID, ni bloqueos, ni configuración, ni contraseña; ver `nfc::plan_type2_write`).
+     * Comprueba antes el modelo y el bloqueo estático de la etiqueta, y relee al acabar.
+     */
+    void start_write(const nfc::Card& card);
     void stop();
 
     bool busy() const;
@@ -62,6 +71,8 @@ private:
     void run_emulate(nfc::Card card);
     void run_scan_device();
     void run_emulate_device(const nfc::Card& card);
+    void run_write(nfc::Card card);
+    void run_write_device(const nfc::Card& card);
     void set_state(State state, const std::string& error = "");
 
     const bool simulated_;
