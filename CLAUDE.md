@@ -98,7 +98,7 @@ está en la memoria de Claude `cardputer-caps-hardware`. Resumen, numeración **
 - La versión está en `project(... VERSION x.y.z)` de `CMakeLists.txt` y en `app-builder.json`:
   se suben a la vez con cada cambio que llegue al aparato, y se anota en «Estado» de aquí y del
   `README.md`.
-- El `.deb` se copia a `~/Documentos/ZeroRF-NFC-<versión>.deb`, sustituyendo al anterior.
+- El `.deb` se copia a `~/Documentos/Software/ZeroRF-NFC-<versión>.deb`, sustituyendo al anterior.
 - Commit en `main` con mensaje en español que empieza por la versión, y push.
 - `app-builder.json` tiene la ficha para la tienda (`czdev publish`), pero **no está publicada**:
   la primera publicación pide un vídeo de la app en el aparato. El icono ya es propio
